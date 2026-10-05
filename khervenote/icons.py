@@ -199,6 +199,31 @@ def _badge(text: str, color: QColor) -> QIcon:
     return _done(px, p)
 
 
+_DOC_BADGES = {"pdf": ("PDF", "#d0302b"), "word": ("DOC", "#2b579a"),
+               "slides": ("PPT", "#c43e1c"), "text": ("TXT", "#6b6b6b")}
+
+
+def document(kind: str) -> QIcon:
+    label, color = _DOC_BADGES.get(kind, ("DOC", "#6b6b6b"))
+    return _badge(label, QColor(color))
+
+
+def paperclip() -> QIcon:
+    px, p = _canvas()
+    p.setPen(_pen(_fg(), 1.7))
+    path = QPainterPath()
+    path.moveTo(15, 7)
+    path.lineTo(15, 17)
+    path.arcTo(QRectF(9, 13, 6, 8), 0, -180)
+    path.lineTo(9, 5.5)
+    path.arcTo(QRectF(9, 1.5, 9, 8), 180, -180)
+    path.lineTo(18, 17.5)
+    path.arcTo(QRectF(6, 11, 12, 12), 0, -180)
+    path.lineTo(6, 8)
+    p.drawPath(path)
+    return _done(px, p)
+
+
 def export_pdf() -> QIcon:
     return _badge("PDF", _red())
 

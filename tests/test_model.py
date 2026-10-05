@@ -90,3 +90,25 @@ def test_plain_text_for_the_ai():
     n.add_block("important", "10 nm")
     assert n.plain_text() == ("# XPS\n(said) hello all\n\n## Sources\n1. Al\n"
                               "  - line width\nKey point: 10 nm\n")
+
+
+def test_attachments_round_trip_and_are_assets():
+    from khervenote.model import Attachment
+    n = Note.new()
+    n.attachments.append(Attachment("assets/att-1.pdf", "Handbook.pdf"))
+    back = Note.from_dict(n.to_dict())
+    assert back.attachments == n.attachments
+    assert "assets/att-1.pdf" in back.asset_paths()
+    assert "Attached: Handbook.pdf" in back.plain_text()
+
+
+def test_markdown_blocks():
+    from khervenote.model import markdown_blocks
+    blocks = markdown_blocks(
+        "# Answer\nThe **Shirley** method\nis iterative.\n\n- one\n  - sub\n1. first\n\n## More\ntext")
+    assert [(b.kind, b.text, b.level, b.numbered) for b in blocks] == [
+        ("heading", "Answer", 2, False),
+        ("typed", "The Shirley method is iterative.", 0, False),
+        ("item", "one", 0, False), ("item", "sub", 1, False), ("item", "first", 0, True),
+        ("heading", "More", 3, False), ("typed", "text", 0, False)]
+    assert blocks[1].marks == [[4, 7, "b"]]

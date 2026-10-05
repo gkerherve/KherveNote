@@ -46,8 +46,12 @@ def list_models() -> list[str]:
     return sorted(m["name"] for m in _request("/api/tags", timeout=3).get("models", []))
 
 
-def chat(model: str, system: str, text: str, timeout: float = 600.0) -> str:
-    payload = {"model": model, "stream": False, "options": {"temperature": 0.3},
+def chat(model: str, system: str, text: str, timeout: float = 600.0,
+         context: int = 8192) -> str:
+    # Ollama's default window (often 4096 tokens) would silently cut off
+    # a document extract; ask for room for it.
+    payload = {"model": model, "stream": False,
+               "options": {"temperature": 0.3, "num_ctx": context},
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": text}]}
     try:
@@ -110,3 +114,52 @@ def pick_default(models: list[str], preferred: str = "") -> str:
             if name.lower().startswith(family):
                 return name
     return models[0] if models else ""
+
+
+# ── attached documents ──────────────────────────────────────────────
+
+DOC_SUMMARY = (
+    "You summarise a document for someone's lecture notes. Write in the "
+    "language of the document. Start with two or three sentences on what it "
+    "is about, then the key points as bullet lines starting with '- '. Keep "
+    "facts, numbers and names exactly; add page references like (p. 4) when "
+    "the text shows them in brackets. Reply with the summary only.")
+
+DOC_PART_SUMMARY = (
+    "Summarise this part of a longer document as bullet lines starting with "
+    "'- ', keeping facts, numbers, names and the page references in "
+    "brackets. Reply with the bullets only.")
+
+DOC_ANSWER = (
+    "You answer a question about a document, using ONLY the extracts given. "
+    "Write the answer as a short section of lecture notes in the language of "
+    "the question: clear paragraphs and, where it helps, bullet lines "
+    "starting with '- '. After each fact give where it comes from, like "
+    "(p. 4) or (Slide 3), from the [brackets] before each extract. If the "
+    "extracts do not contain the answer, say so plainly and do not guess. "
+    "Reply with the section text only, without a title.")
+
+
+def summarise_document(model: str, doc, budget: int = 9000) -> str:
+    """Summary of a whole document; a long one is summarised in parts
+    first, then the parts are combined."""
+    from .documents import batches
+    parts = batches(doc, budget)
+    head = f"Document: {doc.name}\n\n"
+    if len(parts) == 1:
+        return chat(model, DOC_SUMMARY, head + parts[0], context=16384)
+    notes = [chat(model, DOC_PART_SUMMARY, head + part, context=16384) for part in parts]
+    return chat(model, DOC_SUMMARY, head + "\n".join(notes), context=16384)
+
+
+def summarise_section(model: str, doc_name: str, title: str, text: str) -> str:
+    return chat(model, DOC_SUMMARY,
+                f"Document: {doc_name}\nSection: {title}\n\n{text[:30000]}", context=16384)
+
+
+def answer(model: str, doc, question: str) -> str:
+    from .documents import best_passages
+    extracts = "\n\n".join(f"[{p.where}]\n{p.text}" for p in best_passages(doc, question))
+    return chat(model, DOC_ANSWER,
+                f"Document: {doc.name}\n\nExtracts:\n{extracts}\n\nQuestion: {question}",
+                context=16384)

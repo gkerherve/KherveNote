@@ -25,13 +25,14 @@ from PySide6.QtWidgets import (
     QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from . import __version__, compiler, icons, library, local_ai, theme
-from .editor import STYLES, NoteEditor, document_to_note, load_note
+from . import __version__, compiler, documents, icons, library, local_ai, theme
+from .editor import STYLES, NoteEditor, document_to_note, insert_section, load_note
 from .knote_file import EXTENSION, load_knote, save_knote
 from .library_panel import LibraryPanel
 from .model import Note
 from .audio import input_devices
-from .model import Recording
+from .document_panel import AttachmentStrip, DocumentPanel
+from .model import Attachment, Recording, markdown_blocks
 from .permissions import with_permission
 from .serializer import CONTINUOUS_LIMIT_MM, format_time, to_latex
 from .transcriber import DEFAULT_MODEL, LANGUAGES, MODELS, ListenSession, download_progress, missing_packages
@@ -103,9 +104,11 @@ class NoteHeader(QFrame):
             w.setFrame(False)
             w.textEdited.connect(self.changed)
         self.summary.textChanged.connect(self.changed)
+        self.attachments = AttachmentStrip()
         self._col = col
         col.addWidget(self.title)
         col.addLayout(row)
+        col.addWidget(self.attachments)
         col.addWidget(self.summary)
 
     def _current_date(self) -> QDate:
@@ -229,6 +232,25 @@ class MainWindow(QMainWindow):
         dock.setObjectName("notes")
         dock.setWidget(self.library)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self.doc_panel = DocumentPanel()
+        self.doc_dock = QDockWidget("Document", self)
+        self.doc_dock.setObjectName("document")
+        self.doc_dock.setWidget(self.doc_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.doc_dock)
+        self.doc_dock.hide()
+        self._docs: dict[str, object] = {}
+        self._doc_att: Optional[Attachment] = None
+        self.header.attachments.opened.connect(self.show_document)
+        self.header.attachments.removed.connect(self._remove_attachment)
+        self.header.attachments.show_file.connect(self._open_attachment_file)
+        self.doc_panel.open_file.connect(
+            lambda: self._doc_att and self._open_attachment_file(self._doc_att))
+        self.doc_panel.summarise.connect(self._doc_summarise)
+        self.doc_panel.summarise_section.connect(self._doc_summarise_section)
+        self.doc_panel.insert_section.connect(self._doc_insert_section)
+        self.doc_panel.insert_quote.connect(self._doc_quote)
+        self.doc_panel.ask.connect(self._doc_ask)
+        self.editor.files_dropped.connect(self.add_files)
         self._new_note_folder: Optional[Path] = None
         self._autosave_timer = QTimer(self, singleShot=True, interval=2000)
         self._autosave_timer.timeout.connect(self.autosave)
@@ -318,6 +340,9 @@ class MainWindow(QMainWindow):
                               "Mark the paragraph as a question (Ctrl+Shift+Q)")
         self.act_image = A("Image", self.insert_image, None,
                            "Insert a picture; paste (Ctrl+V) works for screenshots")
+        self.act_attach = A("Attach document…", self.attach_dialog, "Ctrl+Shift+A",
+                            "Attach a PDF, Word, PowerPoint or text document to this note — "
+                            "or drop it on the page (Ctrl+Shift+A)")
         self.act_camera = A("Take a picture", self.take_photo, "Ctrl+Shift+P",
                             "Take a picture with the camera — a whiteboard, a slide (Ctrl+Shift+P)")
         self.act_pdf = A("Export PDF", self.export_pdf, "Ctrl+E",
@@ -390,7 +415,8 @@ class MainWindow(QMainWindow):
                   self.act_underline, None, self.act_bullets, self.act_numbers):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("&Note")
-        for a in (self.act_listen, self.act_section, self.act_image, self.act_camera, None,
+        for a in (self.act_listen, self.act_section, self.act_image, self.act_camera,
+                  self.act_attach, None,
                   self.act_summary, self.act_clock):
             m.addSeparator() if a is None else m.addAction(a)
         self._build_speech_menu(mb.addMenu("&Speech"))
@@ -418,7 +444,8 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.style_box)
         for a in (self.act_bold, self.act_italic, self.act_underline, None, self.act_bullets,
                   self.act_numbers, None, self.act_key, self.act_question,
-                  self.act_image, self.act_camera, None, self.act_pdf, self.act_tex, None,
+                  self.act_image, self.act_camera, self.act_attach, None, self.act_pdf,
+                  self.act_tex, None,
                   self.act_manual):
             tb.addSeparator() if a is None else tb.addAction(a)
         ai_button = QToolButton()
@@ -590,6 +617,7 @@ class MainWindow(QMainWindow):
                         (self.act_bullets, icons.bullets()), (self.act_numbers, icons.numbering()),
                         (self.act_key, icons.star()), (self.act_question, icons.question()),
                         (self.act_image, icons.image()), (self.act_camera, icons.camera()),
+                        (self.act_attach, icons.paperclip()),
                         (self.act_pdf, icons.export_pdf()),
                         (self.act_tex, icons.export_tex()), (self.act_undo, icons.undo()),
                         (self.act_redo, icons.redo()), (self.act_manual, icons.help_book())):
@@ -618,6 +646,10 @@ class MainWindow(QMainWindow):
         (self.act_paged if note.meta.layout == "paged" else self.act_continuous).setChecked(True)
         self.editor.work_dir = self.work_dir
         self.header.load(note)
+        self.header.attachments.set_attachments(note.attachments)
+        self._docs.clear()
+        self._doc_att = None
+        self.doc_dock.hide()
         load_note(self.editor, note)
         self._header_dirty = False
         self._update_title()
@@ -1056,6 +1088,172 @@ class MainWindow(QMainWindow):
                     f"{len(pages)} continuous pages between sections")
         self.statusBar().showMessage(msg, 8000)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(dest)))
+
+    # ── attached documents ─────────────────────────────────────────
+
+    def attach_dialog(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(self, "Attach documents", self._last_dir(),
+                                                documents.FILTER)
+        if files:
+            self.add_files(files)
+
+    def add_files(self, files: list) -> None:
+        """Files dropped or chosen: pictures go on the page, documents
+        are attached."""
+        attached, skipped = [], []
+        for fn in files:
+            path = Path(fn)
+            if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".bmp"):
+                rel, dest = self._new_asset(path.suffix.lower())
+                shutil.copyfile(path, dest)
+                self.editor.insert_image(rel, QImage(str(dest)))
+            elif documents.kind_of(path) and path.is_file():
+                rel, dest = self._new_asset(path.suffix.lower())
+                rel = rel.replace("assets/", "assets/att-")
+                dest = self.work_dir / rel
+                shutil.copyfile(path, dest)
+                att = Attachment(rel, path.name)
+                self.note.attachments.append(att)
+                attached.append(att)
+            else:
+                skipped.append(path.name)
+        if attached:
+            self.header.attachments.set_attachments(self.note.attachments)
+            self._header_changed()
+            self.show_document(attached[-1])
+        if skipped:
+            QMessageBox.information(self, "Attach", "These cannot be attached (use PDF, Word "
+                                    ".docx, PowerPoint .pptx, text or pictures):\n\n"
+                                    + "\n".join(skipped))
+
+    def _remove_attachment(self, att: Attachment) -> None:
+        if QMessageBox.question(self, "Remove", f"Remove {att.name} from this note?") \
+                != QMessageBox.Yes:
+            return
+        self.note.attachments = [a for a in self.note.attachments if a.path != att.path]
+        self._docs.pop(att.path, None)
+        if self._doc_att is not None and self._doc_att.path == att.path:
+            self.doc_dock.hide()
+            self._doc_att = None
+        self.header.attachments.set_attachments(self.note.attachments)
+        self._header_changed()
+
+    def _open_attachment_file(self, att: Attachment) -> None:
+        # A copy named as the user knows it, so the other app shows a
+        # sensible title.
+        view = self.work_dir / "open" / att.name
+        view.parent.mkdir(exist_ok=True)
+        shutil.copyfile(self.work_dir / att.path, view)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(view)))
+
+    def show_document(self, att: Attachment) -> None:
+        self._doc_att = att
+        self.doc_dock.show()
+        self.doc_dock.raise_()
+        doc = self._docs.get(att.path)
+        if doc is not None:
+            self.doc_panel.set_document(doc)
+            return
+        self.doc_panel.set_loading(att.name)
+        signals = _Signals(self)
+        path = self.work_dir / att.path
+
+        def done(result) -> None:
+            status, value = result
+            if status == "ok":
+                self._docs[att.path] = value
+                if self._doc_att is att:
+                    self.doc_panel.set_document(value)
+            else:
+                self.doc_panel.set_failed(att.name, value)
+        signals.done.connect(done)
+
+        def work():
+            try:
+                signals.done.emit(("ok", documents.read(path, att.name)))
+            except Exception as exc:  # noqa: BLE001 — a damaged file must not crash
+                signals.done.emit(("error", f"Could not read it: {exc}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _doc(self):
+        return self.doc_panel.doc
+
+    def _ai_write(self, message: str, title: str, job) -> None:
+        """Run *job(model)* with the local AI off the GUI thread and write
+        its answer into the note as a section called *title*."""
+        if self._ai_busy:
+            self.statusBar().showMessage("The local AI is still writing…", 4000)
+            return
+        preferred = self.settings.value("ai/ollama_model", "")
+        signals = _Signals(self)
+        self._ai_busy = True
+        self.statusBar().showMessage(message)
+
+        def done(result) -> None:
+            self._ai_busy = False
+            status, text = result
+            if status != "ok" or not text.strip():
+                self.statusBar().clearMessage()
+                QMessageBox.warning(self, "Local AI", text or "The local AI returned nothing.")
+                return
+            insert_section(self.editor, title, markdown_blocks(text))
+            self.statusBar().showMessage("Written into the note — Ctrl+Z undoes it", 6000)
+        signals.done.connect(done)
+
+        def work():
+            try:
+                model = local_ai.pick_default(local_ai.list_models(), preferred)
+                if not model:
+                    raise local_ai.OllamaError("Ollama has no models yet — "
+                                               "run `ollama pull qwen3.5:4b` (or another).")
+                signals.done.emit(("ok", job(model)))
+            except local_ai.OllamaError as exc:
+                signals.done.emit(("error", str(exc)))
+            except Exception as exc:  # noqa: BLE001
+                signals.done.emit(("error", f"The local AI failed: {exc}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _doc_summarise(self) -> None:
+        doc = self._doc()
+        if doc is not None:
+            self._ai_write(f"Summarising {doc.name}… (a long document takes a while)",
+                           f"Summary — {doc.name}",
+                           lambda m: local_ai.summarise_document(m, doc))
+
+    def _doc_summarise_section(self, i: int) -> None:
+        doc = self._doc()
+        if doc is None:
+            return
+        sec = doc.sections[i]
+        name = sec.title or doc.name
+        self._ai_write(f"Summarising “{name}”…", f"{name} — summary",
+                       lambda m: local_ai.summarise_section(m, doc.name, name, sec.text))
+
+    def _doc_ask(self, question: str) -> None:
+        doc = self._doc()
+        if doc is not None:
+            title = question if len(question) <= 90 else question[:87] + "…"
+            self._ai_write(f"Reading {doc.name} to answer…", title,
+                           lambda m: local_ai.answer(m, doc, question))
+            self.doc_panel.question.clear()
+
+    def _doc_insert_section(self, i: int) -> None:
+        doc = self._doc()
+        if doc is None:
+            return
+        sec = doc.sections[i]
+        where = f", p. {sec.page}" if sec.page else ""
+        insert_section(self.editor, f"{sec.title or 'Extract'} ({doc.name}{where})",
+                       markdown_blocks(sec.text))
+
+    def _doc_quote(self, hit) -> None:
+        doc = self._doc()
+        if doc is None:
+            return
+        quote = f"“{hit.snippet.strip('… ')}”"
+        source = f" ({doc.name}, {hit.where})"
+        self.editor.insert_paragraph(quote + source, [[0, len(quote), "i"]])
+        self.editor.setFocus()
 
     # ── undo / help ────────────────────────────────────────────────
 

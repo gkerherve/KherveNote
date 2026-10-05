@@ -140,7 +140,38 @@ and are not meant for notes.
 **Not happy with what the AI wrote? Press Undo** (Ctrl+Z, or the ↶
 button): each AI change is one undo step.
 
-## 7. Undo and redo
+## 7. Documents — PDF, Word, PowerPoint
+
+Attach the handouts, slides or papers of a talk to its note:
+
+- the **📎 Attach** button (Ctrl+Shift+A), or **drop the files on the
+  page**. PDF, Word (`.docx`), PowerPoint (`.pptx`), text and Markdown
+  files can be attached; pictures dropped on the page go into the text.
+- Each document shows as an **icon** under the note's title, and is kept
+  inside the note file. Right-click an icon to open it in its own app or
+  remove it from the note.
+
+**Click an icon** to open the **Document** panel on the right:
+
+- **Sections** — the document's own chapters (a PDF's bookmarks, Word
+  headings, one per slide, or one per page). Double-click a section, or
+  *Insert into note*, to copy it into the note as a new section.
+  *Summarise section* asks the AI for its key points instead.
+- **Find** — type words or a sentence: every place it appears is listed
+  with its page and the sentence around it. Double-click one to quote it
+  in the note, with its page.
+- **Summarise the whole document** — the AI writes a summary section.
+  Long documents are summarised part by part, so it takes a little time.
+- **Ask the AI about this document** — type a question and press Enter.
+  The AI reads the passages that best match the question and writes the
+  answer as a **new section** of your note, with page references such as
+  (p. 23). If the document does not say, it says so rather than guess.
+
+Everything the AI writes goes after the section you are in, and one
+**Undo** removes it. This uses the local AI (section 6) — nothing leaves
+the computer.
+
+## 8. Undo and redo
 
 - **Undo**: Ctrl+Z, the ↶ button, or *Edit ▸ Undo*.
 - **Redo**: Ctrl+Shift+Z (Ctrl+Y on Windows), the ↷ button, or
@@ -151,7 +182,7 @@ what the microphone wrote — most recent first. The words shown live
 while someone is still speaking are not part of the note yet, so they
 never need undoing.
 
-## 8. Pictures
+## 9. Pictures
 
 - **Image** button: insert a picture file.
 - **Paste** (Ctrl+V): paste a screenshot, e.g. of a slide.
@@ -162,7 +193,7 @@ never need undoing.
 
 Text typed after a picture on the same line becomes its caption.
 
-## 9. Saving and exporting
+## 10. Saving and exporting
 
 - Notes save themselves (see section 2); **Save** (Ctrl+S) saves at once.
   A `.knote` file holds the note, its pictures and its recordings.
@@ -175,12 +206,12 @@ Text typed after a picture on the same line becomes its caption.
 - **Export LaTeX** writes the `.tex` file (and its pictures) to edit or
   compile elsewhere, e.g. in KherveTeX.
 
-## 10. Appearance
+## 11. Appearance
 
 *View ▸ Theme*: **System** (follows the computer), **Light** or **Dark**
 (a black page).
 
-## 11. All shortcuts
+## 12. All shortcuts
 
 | Action | Shortcut |
 |---|---|
@@ -195,5 +226,6 @@ Text typed after a picture on the same line becomes its caption.
 | Sub-item / back out | Tab / Shift+Tab (in a list) |
 | Rephrase / Summarise with AI | Ctrl+Shift+R / Ctrl+Alt+S |
 | Take a picture | Ctrl+Shift+P |
+| Attach a document | Ctrl+Shift+A |
 | Export PDF | Ctrl+E |
 | This manual | F1 |

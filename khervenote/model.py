@@ -13,6 +13,7 @@ matched back to the recording once there is one.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -123,6 +124,21 @@ class Recording:
 
 
 @dataclass
+class Attachment:
+    """A document attached to the note (PDF, Word, slides…), kept in its
+    assets under a unique name; *name* is what the user called it."""
+    path: str
+    name: str
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "name": self.name}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Attachment":
+        return cls(path=d["path"], name=d.get("name") or d["path"].rsplit("/", 1)[-1])
+
+
+@dataclass
 class Meta:
     title: str = ""
     speaker: str = ""
@@ -151,6 +167,7 @@ class Note:
     summary: str = ""
     sections: list[Section] = field(default_factory=lambda: [Section()])
     recordings: list[Recording] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
 
     @classmethod
     def new(cls, now: Optional[datetime] = None) -> "Note":
@@ -223,13 +240,16 @@ class Note:
 
     def asset_paths(self) -> list[str]:
         return ([b.path for s in self.sections for b in s.blocks if b.path]
-                + [r.path for r in self.recordings])
+                + [r.path for r in self.recordings]
+                + [a.path for a in self.attachments])
 
     def plain_text(self) -> str:
         """The note as lightly marked-up text, for an AI to read."""
         m = self.meta
         lines = [f"# {m.title}" if m.title else "# Notes"]
         lines += [x for x in (m.speaker, m.date, m.place) if x]
+        if self.attachments:
+            lines.append("Attached: " + ", ".join(a.name for a in self.attachments))
         for sec in self.sections:
             if sec.title:
                 lines += ["", f"## {sec.title}"]
@@ -253,7 +273,8 @@ class Note:
         return {"format": FORMAT_VERSION, "meta": self.meta.to_dict(),
                 "summary": self.summary,
                 "sections": [s.to_dict() for s in self.sections],
-                "recordings": [r.to_dict() for r in self.recordings]}
+                "recordings": [r.to_dict() for r in self.recordings],
+                "attachments": [a.to_dict() for a in self.attachments]}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Note":
@@ -265,4 +286,64 @@ class Note:
                    summary=d.get("summary", ""),
                    sections=[Section.from_dict(s)
                              for s in d.get("sections", [])],
-                   recordings=[Recording.from_dict(r) for r in d.get("recordings", [])])
+                   recordings=[Recording.from_dict(r) for r in d.get("recordings", [])],
+                   attachments=[Attachment.from_dict(a) for a in d.get("attachments", [])])
+
+
+_MD_ITEM = re.compile(r"^(\s*)([-*•]|\d{1,3}[.)])\s+(.*)$")
+_MD_HEAD = re.compile(r"^(#{1,6})\s+(.*)$")
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
+
+
+def markdown_blocks(text: str, top_level: int = 2) -> list[Block]:
+    """Blocks from the light Markdown an AI answers in: ``#`` headings
+    (shifted so the shallowest becomes *top_level*), ``-`` / ``1.``
+    items nested by indent, ``**bold**``, and paragraphs between blank
+    lines."""
+    out: list[Block] = []
+    para: list[str] = []
+    widths: list[int] = []
+    heads = [len(m.group(1)) for m in map(_MD_HEAD.match, text.splitlines()) if m]
+    shift = top_level - min(heads) if heads else 0
+
+    def rich(s: str) -> tuple[str, list[list]]:
+        marks, plain, pos = [], "", 0
+        for m in _MD_BOLD.finditer(s):
+            plain += s[pos:m.start()]
+            inner = m.group(1) or m.group(2)
+            marks.append([len(plain), len(inner), "b"])
+            plain += inner
+            pos = m.end()
+        return plain + s[pos:], marks
+
+    def flush() -> None:
+        if para:
+            t, marks = rich(" ".join(para))
+            out.append(Block(kind="typed", text=t, marks=marks))
+            para.clear()
+
+    for line in text.splitlines():
+        if not line.strip():
+            flush()
+            widths.clear()
+            continue
+        head = _MD_HEAD.match(line.strip())
+        item = _MD_ITEM.match(line)
+        if head:
+            flush()
+            level = max(2, min(3, len(head.group(1)) + shift))
+            out.append(Block(kind="heading", text=rich(head.group(2).strip("# "))[0], level=level))
+        elif item:
+            flush()
+            width = len(item.group(1).expandtabs(4))
+            while widths and widths[-1] > width:
+                widths.pop()
+            if not widths or widths[-1] < width:
+                widths.append(width)
+            t, marks = rich(item.group(3).strip())
+            out.append(Block(kind="item", text=t, marks=marks, level=min(3, len(widths) - 1),
+                             numbered=item.group(2)[0].isdigit()))
+        else:
+            para.append(line.strip())
+    flush()
+    return out

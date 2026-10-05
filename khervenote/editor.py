@@ -238,6 +238,8 @@ class NoteEditor(QTextEdit):
     image_pasted = Signal(QImage)
     #: "rephrase", "summarise" or "summarise_note" from the context menu.
     ai_requested = Signal(str)
+    #: Local files dropped or pasted onto the page.
+    files_dropped = Signal(list)
 
     def __init__(self, clock: Callable[[], Optional[float]], parent=None) -> None:
         super().__init__(parent)
@@ -655,12 +657,28 @@ class NoteEditor(QTextEdit):
         at.endEditBlock()
         self.setTextCursor(at)
 
+    def insert_paragraph(self, text: str, marks: Optional[list] = None) -> None:
+        """A new paragraph after the one the cursor is in (one undo step)."""
+        cur = self.textCursor()
+        cur.beginEditBlock()
+        cur.movePosition(QTextCursor.EndOfBlock)
+        new = bool(cur.block().text().strip()) or cur.block().textList() is not None
+        _write_block(self, cur, Block(kind="typed", text=text, t=self.clock(),
+                                      marks=marks or []), new)
+        cur.endEditBlock()
+        self.setTextCursor(cur)
+
     # paste
 
     def canInsertFromMimeData(self, source) -> bool:  # noqa: N802
-        return source.hasImage() or super().canInsertFromMimeData(source)
+        return source.hasImage() or source.hasUrls() or super().canInsertFromMimeData(source)
 
     def insertFromMimeData(self, source) -> None:  # noqa: N802
+        files = [u.toLocalFile() for u in source.urls() if u.isLocalFile()] \
+            if source.hasUrls() else []
+        if files:
+            self.files_dropped.emit(files)
+            return
         if source.hasImage() and not source.hasText():
             img = QImage(source.imageData())
             if not img.isNull():
@@ -748,56 +766,81 @@ def document_to_note(doc: QTextDocument, note: Note) -> Note:
     return note
 
 
+def _write_block(editor: NoteEditor, cur: QTextCursor, b: Block, new: bool) -> None:
+    """Write model block *b* at *cur*, in a new paragraph unless *new* is
+    False (the document's first, still empty, paragraph)."""
+    doc = editor.document()
+    if new:
+        cur.insertBlock(QTextBlockFormat(), QTextCharFormat())
+    block = cur.block()
+    if b.kind == "image":
+        apply_style(block, "typed")
+        block.setUserData(BlockMeta(b.t))
+        img = QImage(str(editor.work_dir / b.path)) if editor.work_dir else QImage()
+        doc.addResource(QTextDocument.ImageResource, QUrl(b.path), img)
+        _insert_image_at(cur, b.path, img)
+        if b.text:
+            cur.insertText(" " + b.text)
+        return
+    kind = "typed" if b.kind == "item" else b.kind
+    apply_style(block, kind, b.level if b.kind == "heading" else 0)
+    block.setUserData(BlockMeta(b.t))
+    start = cur.position()
+    cur.insertText(b.text.replace("\n", _LINE_SEP))
+    for m_start, length, style in b.marks:
+        c = QTextCursor(doc)
+        c.setPosition(start + m_start)
+        c.setPosition(min(start + m_start + length, cur.position()), QTextCursor.KeepAnchor)
+        cf = QTextCharFormat()
+        if style == "b":
+            cf.setFontWeight(QFont.Bold)
+        elif style == "i":
+            cf.setFontItalic(True)
+        else:
+            cf.setFontUnderline(True)
+        c.mergeCharFormat(cf)
+    if b.kind == "item":
+        set_list(block, b.numbered, b.level)
+
+
 def load_note(editor: NoteEditor, note: Note) -> None:
     doc = editor.document()
     doc.clear()
     cur = QTextCursor(doc)
     cur.beginEditBlock()
     first = True
-
-    def new_block(kind: str, level: int, t: Optional[float]) -> QTextBlock:
-        nonlocal first
-        if not first:
-            cur.insertBlock(QTextBlockFormat(), QTextCharFormat())
-        first = False
-        block = cur.block()
-        apply_style(block, kind, level, QTextCursor(cur))
-        block.setUserData(BlockMeta(t))
-        return block
-
     for i, sec in enumerate(note.sections):
+        blocks = list(sec.blocks)
         if sec.title or i > 0:
-            new_block("heading", 1, sec.t)
-            cur.insertText(sec.title)
-        for b in sec.blocks:
-            if b.kind == "image":
-                new_block("typed", 0, b.t)
-                img = QImage(str(editor.work_dir / b.path)) if editor.work_dir else QImage()
-                doc.addResource(QTextDocument.ImageResource, QUrl(b.path), img)
-                _insert_image_at(cur, b.path, img)
-                if b.text:
-                    cur.insertText(" " + b.text)
-                continue
-            kind = "typed" if b.kind == "item" else b.kind
-            block = new_block(kind, b.level if b.kind == "heading" else 0, b.t)
-            start = cur.position()
-            cur.insertText(b.text.replace("\n", _LINE_SEP))
-            for m_start, length, style in b.marks:
-                c = QTextCursor(doc)
-                c.setPosition(start + m_start)
-                c.setPosition(min(start + m_start + length, cur.position()), QTextCursor.KeepAnchor)
-                cf = QTextCharFormat()
-                if style == "b":
-                    cf.setFontWeight(QFont.Bold)
-                elif style == "i":
-                    cf.setFontItalic(True)
-                else:
-                    cf.setFontUnderline(True)
-                c.mergeCharFormat(cf)
-            if b.kind == "item":
-                set_list(block, b.numbered, b.level)
+            blocks.insert(0, Block(kind="heading", text=sec.title, t=sec.t, level=1))
+        for b in blocks:
+            _write_block(editor, cur, b, not first)
+            first = False
     cur.endEditBlock()
     doc.clearUndoRedoStacks()
     doc.setModified(False)
     editor.gutter.update()
     editor.outline_changed.emit()
+
+
+def insert_section(editor: NoteEditor, title: str, blocks: list[Block]) -> None:
+    """A new section *title* holding *blocks*, after the section the
+    cursor is in — one undo step."""
+    doc = editor.document()
+    block = editor.textCursor().block()
+    end = block
+    while end.next().isValid() and block_kind(end.next()) != ("heading", 1):
+        end = end.next()
+    cur = QTextCursor(end)
+    cur.beginEditBlock()
+    cur.movePosition(QTextCursor.EndOfBlock)
+    blank_doc = doc.blockCount() == 1 and not doc.firstBlock().text().strip()
+    t = editor.clock()
+    _write_block(editor, cur, Block(kind="heading", text=title, t=t, level=1), not blank_doc)
+    heading = cur.block().blockNumber()
+    for b in blocks:
+        b.t = t
+        _write_block(editor, cur, b, True)
+    cur.endEditBlock()
+    editor.go_to_block(heading)
+    editor.gutter.update()

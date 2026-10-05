@@ -102,9 +102,15 @@ stack. Consequences that must hold for anything added to the template:
 | Local AI | Right-click Summarise / Rephrase with **Ollama** | done (0.6) |
 | Claude | MCP server/bridge (from KherveTeX `mcp_*.py`), "Summarise with Claude" | later |
 | Sections | Section suggestions: silence + cue phrases, then semantic | later |
-| Import | Word / PDF / PowerPoint notes → a proper document | later |
+| Documents | Attach PDF / Word / PowerPoint; sections, find, summarise, ask the AI | done (0.12) |
 | Links | Open in KherveTeX, KherveRef citations | later |
 | Release | Installers with tectonic, warmed cache and a Whisper model | later |
+
+Attached documents (`documents.py`, Qt-free) are read into sections that
+never share text (a PDF's bookmarks are cut where their title is
+printed). Questions send only the best-matching passages (BM25, ~9000
+characters) and long summaries go part by part, so a small local model
+copes with a long manual; `num_ctx` is raised to fit.
 
 The local AI (`local_ai.py`) talks to Ollama over plain HTTP
 (`OLLAMA_HOST`, default `localhost:11434`) and sends `think: false` so

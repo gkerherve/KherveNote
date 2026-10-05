@@ -51,6 +51,10 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   Pick the model under *AI ▸ Local AI model*. Ctrl+Z undoes any of them.
   Needs [Ollama](https://ollama.com) running with at least one model
   (e.g. `ollama pull qwen3.5:4b`).
+- **Documents** (📎, or drop them on the page): attach PDF, Word,
+  PowerPoint or text files to a note. They show as icons; click one for
+  its sections, a search through it, a summary, or a question to the
+  local AI — answers are written into the note as sections, with pages.
 - **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
 - **Camera** (Ctrl+Shift+P): take a picture of a whiteboard, a slide or
   a handout with the computer's camera; Space takes it.
