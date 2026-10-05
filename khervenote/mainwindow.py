@@ -18,14 +18,18 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeyS
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDockWidget, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPlainTextEdit, QToolBar, QVBoxLayout, QWidget,
+    QPlainTextEdit, QProgressBar, QToolBar, QVBoxLayout, QWidget,
 )
 
 from . import __version__, compiler, icons, theme
 from .editor import STYLES, NoteEditor, document_to_note, load_note
 from .knote_file import EXTENSION, load_knote, save_knote
 from .model import Note
+from .audio import input_devices
+from .model import Recording
+from .permissions import with_permission
 from .serializer import CONTINUOUS_LIMIT_MM, format_time, to_latex
+from .transcriber import DEFAULT_MODEL, LANGUAGES, MODELS, ListenSession, missing_packages
 
 
 def version_string() -> str:
@@ -168,6 +172,17 @@ class MainWindow(QMainWindow):
         dock.setWidget(self.outline)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
 
+        self.listen_label = QLabel()
+        self.meter = QProgressBar()
+        self.meter.setRange(0, 100)
+        self.meter.setTextVisible(False)
+        self.meter.setFixedSize(90, 10)
+        for w in (self.listen_label, self.meter):
+            w.setVisible(False)
+            self.statusBar().addPermanentWidget(w)
+        self.session = None
+        self._engine = None
+        self._listen_start = 0.0
         self.clock = QLabel()
         self.statusBar().addPermanentWidget(self.clock)
         timer = QTimer(self)
@@ -201,9 +216,10 @@ class MainWindow(QMainWindow):
         self.act_open = A("&Open…", self.open_dialog, QKeySequence.Open)
         self.act_save = A("&Save", self.save, QKeySequence.Save)
         self.act_save_as = A("Save &as…", self.save_as, QKeySequence.SaveAs)
-        self.act_listen = A("Listen", lambda: None, None,
-                            "Write what is said, with offline Whisper")
-        self.act_listen.setEnabled(False)
+        self.act_listen = A("Listen", self.toggle_listen, "Ctrl+L",
+                            "Write what is said onto the page — offline Whisper, "
+                            "the audio never leaves this computer (Ctrl+L)")
+        self.act_listen.setCheckable(True)
         self.act_section = A("Section", lambda: ed.new_section(), "Ctrl+Return",
                              "Start a new section (Ctrl+Return)")
         self.act_bold = A("Bold", lambda: ed.set_mark("b"), QKeySequence.Bold)
@@ -278,6 +294,7 @@ class MainWindow(QMainWindow):
         for a in (self.act_listen, self.act_section, self.act_image, self.act_camera, None,
                   self.act_summary, self.act_clock):
             m.addSeparator() if a is None else m.addAction(a)
+        self._build_speech_menu(mb.addMenu("&Speech"))
         m = mb.addMenu("&Export")
         m.addAction(self.act_continuous)
         m.addAction(self.act_paged)
@@ -302,6 +319,41 @@ class MainWindow(QMainWindow):
             tb.addSeparator() if a is None else tb.addAction(a)
         self.addToolBar(tb)
         self.toolbar = tb
+
+    def _build_speech_menu(self, menu) -> None:
+        menu.addAction(self.act_listen)
+        menu.addSeparator()
+        models = menu.addMenu("&Model")
+        group = QActionGroup(self)
+        current = self.settings.value("speech/model", DEFAULT_MODEL)
+        for name, label in MODELS:
+            a = models.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(name == current)
+            a.triggered.connect(lambda _=False, n=name: self.settings.setValue("speech/model", n))
+            group.addAction(a)
+        langs = menu.addMenu("&Language")
+        group = QActionGroup(self)
+        current = self.settings.value("speech/language", "")
+        for code, label in LANGUAGES:
+            a = langs.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(code == current)
+            a.triggered.connect(lambda _=False, c=code: self.settings.setValue("speech/language", c))
+            group.addAction(a)
+        self._mic_menu = menu.addMenu("M&icrophone")
+        self._mic_menu.aboutToShow.connect(self._fill_mic_menu)
+
+    def _fill_mic_menu(self) -> None:
+        self._mic_menu.clear()
+        group = QActionGroup(self._mic_menu)
+        current = self.settings.value("speech/device", "")
+        for name in [""] + [n for _, n in input_devices()]:
+            a = self._mic_menu.addAction(name or "System default")
+            a.setCheckable(True)
+            a.setChecked(name == current)
+            a.triggered.connect(lambda _=False, n=name: self.settings.setValue("speech/device", n))
+            group.addAction(a)
 
     def _set_icons(self) -> None:
         for a, icon in ((self.act_new, icons.new_note()), (self.act_open, icons.open_note()),
@@ -388,6 +440,86 @@ class MainWindow(QMainWindow):
 
     def _tick(self) -> None:
         self.clock.setText("Session " + format_time(self.note.elapsed()))
+        if self.session is not None and self.act_listen.isChecked():
+            self.listen_label.setText(
+                "\u25cf Listening " + format_time(self.session.duration))
+
+    # ── listening ──────────────────────────────────────────────────
+
+    def toggle_listen(self, on: bool) -> None:
+        if on:
+            self.act_listen.setChecked(False)
+            self._start_listening()
+        else:
+            self._stop_listening()
+
+    def _start_listening(self) -> None:
+        if self.session is not None:
+            return
+        missing = missing_packages()
+        if missing:
+            QMessageBox.warning(self, "Listen", "Listening needs these Python packages:\n\n"
+                                f"    pip install {' '.join(missing)}")
+            return
+        if not self.settings.value("speech/consent_shown", False, type=bool):
+            QMessageBox.information(self, "Listen", (
+                "KherveNote will record the microphone and write down what is said. "
+                "Everything stays on this computer.\n\nMake sure the speaker and the "
+                "audience are happy to be recorded."))
+            self.settings.setValue("speech/consent_shown", True)
+        with_permission("microphone", self, self._open_session)
+
+    def _open_session(self) -> None:
+        model = self.settings.value("speech/model", DEFAULT_MODEL)
+        if self._engine is not None and self._engine[0] != model:
+            self._engine = None
+        (self.work_dir / "assets").mkdir(exist_ok=True)
+        path = self.work_dir / f"assets/rec-{uuid.uuid4().hex[:10]}.ogg"
+        device_name = self.settings.value("speech/device", "")
+        device = next((i for i, n in input_devices() if n == device_name), None)
+        t0 = self.note.elapsed() or 0.0
+        self.session = ListenSession(str(path), t0, model,
+                                     self.settings.value("speech/language", ""), device, self,
+                                     engine=self._engine[1] if self._engine else None)
+        self.session.text.connect(self.editor.append_transcript)
+        self.session.level.connect(lambda v: self.meter.setValue(min(100, int(v * 400))))
+        self.session.status.connect(lambda m: self.statusBar().showMessage(m, 6000))
+        self.session.failed.connect(self._listen_failed)
+        self.session.finished.connect(lambda s=self.session, m=model: self._session_done(s, m))
+        self.act_listen.setChecked(True)
+        self.act_listen.setIcon(icons.microphone(recording=True))
+        for w in (self.listen_label, self.meter):
+            w.setVisible(True)
+        self.listen_label.setText("\u25cf Listening")
+        self.listen_label.setStyleSheet(f"color:{theme.hex_('red')}; font-weight:bold;")
+        self.session.start()
+
+    def _stop_listening(self) -> None:
+        self.act_listen.setChecked(False)
+        self.act_listen.setIcon(icons.microphone())
+        for w in (self.listen_label, self.meter):
+            w.setVisible(False)
+        if self.session is not None:
+            self.statusBar().showMessage("Writing down the last words…", 8000)
+            self.session.stop()
+
+    def _listen_failed(self, message: str) -> None:
+        self.statusBar().showMessage(message, 15000)
+        if self.session is not None and self.session.duration == 0:
+            self._stop_listening()
+            QMessageBox.warning(self, "Listen", message)
+
+    def _session_done(self, session, model: str) -> None:
+        if session.engine is not None:
+            self._engine = (model, session.engine)
+        path = Path(session.audio_path)
+        if path.exists() and session.duration > 0:
+            rel = path.relative_to(self.work_dir).as_posix()
+            self.note.recordings.append(Recording(rel, session.t0, session.duration))
+            self._header_changed()
+        if self.session is session:
+            self.session = None
+        self.statusBar().showMessage("Stopped listening", 4000)
 
     def _toggle_summary(self) -> None:
         self.header.summary.setVisible(not self.header.summary.isVisible())
@@ -584,6 +716,8 @@ class MainWindow(QMainWindow):
             "<p>© 2026 Gwilherm Kerherve · GPL v3</p>"))
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self.session is not None:
+            self._stop_listening()
         if self._confirm_discard():
             self._tmp.cleanup()
             event.accept()

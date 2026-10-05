@@ -99,3 +99,47 @@ def test_style_change_keeps_user_bold_but_not_heading_bold(ed):
     out = document_to_note(ed.document(), Note.new()).sections[0].blocks[0]
     assert out.kind == "important" and out.marks == []
     assert block_kind(ed.document().begin()) == ("important", 0)
+
+
+def _texts(ed):
+    out = []
+    b = ed.document().begin()
+    while b.isValid():
+        out.append((block_kind(b)[0], b.text()))
+        b = b.next()
+    return out
+
+
+def test_transcript_goes_to_the_end_and_joins_quick_speech(ed):
+    load_note(ed, Note.new())
+    ed.append_transcript("Good morning.", 1.0)
+    ed.append_transcript("Today: XPS.", 5.0)
+    ed.append_transcript("Much later.", 60.0)
+    assert _texts(ed) == [("transcript", "Good morning. Today: XPS."),
+                          ("transcript", "Much later.")]
+
+
+def test_transcript_does_not_disturb_typing_in_the_last_paragraph(ed):
+    load_note(ed, Note.new())
+    ed.append_transcript("Speech one.", 1.0)
+    cur = ed.textCursor()
+    cur.movePosition(QTextCursor.End)
+    ed.setTextCursor(cur)
+    QTest.keyClick(ed, Qt.Key_Return)
+    QTest.keyClicks(ed, "my no")
+    ed.append_transcript("Speech two.", 70.0)
+    QTest.keyClicks(ed, "te")
+    assert _texts(ed) == [("transcript", "Speech one."), ("transcript", "Speech two."),
+                          ("typed", "my note")]
+
+
+def test_transcript_after_a_new_heading_keeps_the_cursor_in_it(ed):
+    load_note(ed, Note.new())
+    ed.append_transcript("Intro.", 1.0)
+    ed.new_section("Res")
+    ed.append_transcript("Results now.", 90.0)
+    QTest.keyClicks(ed, "ults")
+    assert _texts(ed) == [("transcript", "Intro."), ("heading", "Results"),
+                          ("transcript", "Results now.")]
+    n = document_to_note(ed.document(), Note.new())
+    assert n.sections[1].blocks[0].t == 90.0

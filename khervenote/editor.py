@@ -59,6 +59,8 @@ class BlockMeta(QTextBlockUserData):
     def __init__(self, t: Optional[float]) -> None:
         super().__init__()
         self.t = t
+        #: When speech was last appended to this paragraph.
+        self.t_last = t
 
 
 # ── per-block styling ───────────────────────────────────────────────
@@ -276,9 +278,12 @@ class NoteEditor(QTextEdit):
         self.gutter.update()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
+        # Margins first: QTextEdit lays the text out for the viewport
+        # width in its own resizeEvent.  (The viewport's resizes arrive
+        # here too, so measure the widget, not the event.)
         side = max(GUTTER + 8, (self.width() - MAX_COLUMN) // 2)
         self.setViewportMargins(side, 0, max(16, side - GUTTER), 0)
+        super().resizeEvent(event)
         self.gutter.setGeometry(side - GUTTER - 4, 0, GUTTER, self.viewport().height())
 
     def sizeHint(self) -> QSize:
@@ -398,6 +403,55 @@ class NoteEditor(QTextEdit):
         apply_style(cur.block(), "typed", 0, QTextCursor(cur))
         cur.endEditBlock()
         self.setTextCursor(cur)
+
+    def append_transcript(self, text: str, t: float) -> None:
+        """Write recognised speech at the end of the note, without
+        disturbing the user: if they are typing in the last paragraph,
+        the speech goes just above it; their cursor and selection never
+        move.  Speech that follows on quickly joins the paragraph before
+        it, so the transcript reads as prose rather than one line per
+        pause."""
+        doc = self.document()
+        user = self.textCursor()
+        pos, anchor = user.position(), user.anchor()
+        last = doc.lastBlock()
+        kind_last, _ = block_kind(last)
+        if last.previous().isValid() and (
+                not last.text().strip()
+                or (user.block() == last and kind_last not in ("heading", "transcript"))):
+            after = last.previous()
+        else:
+            after = last
+        cur = QTextCursor(after)
+        cur.beginEditBlock()
+        cur.movePosition(QTextCursor.EndOfBlock)
+        insert_at = cur.position()
+        meta = after.userData()
+        kind_after, _ = block_kind(after)
+        if (kind_after == "transcript" and isinstance(meta, BlockMeta)
+                and meta.t_last is not None and t - meta.t_last < 25
+                and len(after.text()) < 500):
+            cur.insertText(" " + text)
+            meta.t_last = t
+        elif not after.text().strip() and after.textList() is None and kind_after != "heading":
+            apply_style(after, "transcript")
+            after.setUserData(BlockMeta(t))
+            cur.insertText(text)
+        else:
+            cur.insertBlock(QTextBlockFormat(), QTextCharFormat())
+            apply_style(cur.block(), "transcript")
+            cur.block().setUserData(BlockMeta(t))
+            cur.insertText(text)
+        cur.endEditBlock()
+        if insert_at >= max(pos, anchor):
+            # Text went in at or after the user's cursor, so its numbers
+            # still hold — but Qt pushes a cursor sitting exactly at the
+            # insertion point along with the new text; put it back.
+            restore = QTextCursor(doc)
+            restore.setPosition(anchor)
+            restore.setPosition(pos, QTextCursor.KeepAnchor)
+            self.setTextCursor(restore)
+        self.gutter.update()
 
     def loadResource(self, rtype: int, url: QUrl):  # noqa: N802
         if rtype == QTextDocument.ImageResource and self.work_dir is not None:

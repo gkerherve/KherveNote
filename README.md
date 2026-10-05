@@ -21,6 +21,14 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
   the toolbar buttons). **Tab** makes a sub-item — numbered sub-items
   export as 1.1, 1.2, 1.2.1 — Shift+Tab goes back, Enter on an empty item
   leaves the list.
+- **Listen** (the microphone, Ctrl+L): what is said is written onto the
+  page in grey as it is spoken, with its time; keep typing your own notes
+  meanwhile — the speech goes in above the line you are writing. Press
+  again to stop. Speech-to-text is **Whisper running on this computer**
+  (faster-whisper): the audio never leaves it. The model downloads once
+  (*Speech ▸ Model*: tiny … large; Small by default), then it works
+  offline. *Speech ▸ Language* and *Speech ▸ Microphone* choose the rest.
+  The recording is kept inside the `.knote`.
 - **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
 - **Camera** (Ctrl+Shift+P): take a picture of a whiteboard, a slide or
   a handout with the computer's camera; Space takes it.
@@ -32,10 +40,9 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
 
 ## Coming next
 
-Offline speech-to-text with Whisper (v0.2), summaries and note writing
-by Claude over MCP (v0.3), automatic section detection (v0.4), import of
-existing Word/PDF/PowerPoint notes (v0.5). See `CLAUDE.md` for the
-roadmap.
+Summarise / rephrase with a local AI (Ollama), then Claude over MCP,
+automatic section detection, and import of existing Word / PDF /
+PowerPoint notes. See `CLAUDE.md` for the roadmap.
 
 ## Running from source
 

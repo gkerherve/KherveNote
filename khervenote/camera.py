@@ -12,9 +12,11 @@ from PySide6.QtGui import QImage, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QCamera, QImageCapture, QMediaCaptureSession, QMediaDevices
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout,
 )
+
+from .permissions import with_permission
 
 
 def cameras() -> list:
@@ -22,22 +24,7 @@ def cameras() -> list:
 
 
 def with_camera_permission(parent, then) -> None:
-    """Run *then()* once the OS allows camera use, asking if needed."""
-    try:
-        from PySide6.QtCore import QCameraPermission
-    except ImportError:          # Qt < 6.5: no permission API, just try
-        then()
-        return
-    app = QApplication.instance()
-    perm = QCameraPermission()
-    status = app.checkPermission(perm)
-    if status == Qt.PermissionStatus.Granted:
-        then()
-    elif status == Qt.PermissionStatus.Denied:
-        QMessageBox.warning(parent, "Camera", "KherveNote is not allowed to use the camera. "
-                            "Allow it in the system privacy settings (Camera) and try again.")
-    else:
-        app.requestPermission(perm, parent, lambda p: with_camera_permission(parent, then))
+    with_permission("camera", parent, then)
 
 
 class CameraDialog(QDialog):

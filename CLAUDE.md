@@ -85,7 +85,7 @@ stack. Consequences that must hold for anything added to the template:
 | Lists | Bullet / numbered / nested lists | done (0.2) |
 | Editor | Write directly on one endless page, headings, B/I/U, themes | done (0.3) |
 | Camera | Take a picture with the computer's camera | done (0.4) |
-| Listen | Microphone + **offline Whisper** (faster-whisper) writing into the page | 0.5 |
+| Listen | Microphone + **offline Whisper** (faster-whisper) writing into the page | done (0.5) |
 | Local AI | Right-click Summarise / Rephrase with **Ollama** | 0.6 |
 | Claude | MCP server/bridge (from KherveTeX `mcp_*.py`), "Summarise with Claude" | later |
 | Sections | Section suggestions: silence + cue phrases, then semantic | later |

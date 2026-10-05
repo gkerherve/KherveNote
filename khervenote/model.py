@@ -107,6 +107,22 @@ class Section:
 
 
 @dataclass
+class Recording:
+    """One Listen-to-Stop run of the microphone, kept in the note."""
+    path: str
+    t0: float = 0.0          # session time the recording started
+    duration: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "t0": round(self.t0, 2),
+                "duration": round(self.duration, 2)}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Recording":
+        return cls(path=d["path"], t0=d.get("t0", 0.0), duration=d.get("duration", 0.0))
+
+
+@dataclass
 class Meta:
     title: str = ""
     speaker: str = ""
@@ -134,6 +150,7 @@ class Note:
     meta: Meta = field(default_factory=Meta)
     summary: str = ""
     sections: list[Section] = field(default_factory=lambda: [Section()])
+    recordings: list[Recording] = field(default_factory=list)
 
     @classmethod
     def new(cls, now: Optional[datetime] = None) -> "Note":
@@ -205,14 +222,16 @@ class Note:
         self.sections[idx - 1].blocks.extend(sec.blocks)
 
     def asset_paths(self) -> list[str]:
-        return [b.path for s in self.sections for b in s.blocks if b.path]
+        return ([b.path for s in self.sections for b in s.blocks if b.path]
+                + [r.path for r in self.recordings])
 
     # ── persistence ────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         return {"format": FORMAT_VERSION, "meta": self.meta.to_dict(),
                 "summary": self.summary,
-                "sections": [s.to_dict() for s in self.sections]}
+                "sections": [s.to_dict() for s in self.sections],
+                "recordings": [r.to_dict() for r in self.recordings]}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Note":
@@ -223,4 +242,5 @@ class Note:
         return cls(meta=Meta.from_dict(d.get("meta", {})),
                    summary=d.get("summary", ""),
                    sections=[Section.from_dict(s)
-                             for s in d.get("sections", [])])
+                             for s in d.get("sections", [])],
+                   recordings=[Recording.from_dict(r) for r in d.get("recordings", [])])

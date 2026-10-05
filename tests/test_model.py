@@ -69,3 +69,12 @@ def test_newer_format_is_refused():
 def test_bad_layout_falls_back_to_continuous():
     n = Note.from_dict({"meta": {"layout": "scroll"}})
     assert n.meta.layout == "continuous"
+
+
+def test_recordings_round_trip_and_count_as_assets():
+    from khervenote.model import Recording
+    n = Note.new()
+    n.recordings.append(Recording("assets/rec-1.ogg", t0=12.5, duration=60))
+    back = Note.from_dict(n.to_dict())
+    assert back.recordings == n.recordings
+    assert "assets/rec-1.ogg" in back.asset_paths()
