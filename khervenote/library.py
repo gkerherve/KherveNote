@@ -35,10 +35,19 @@ class NoteInfo:
     date: str
     started: str
     text: str           # everything searchable, lower-cased
+    first_line: str = ""
 
     @property
     def label(self) -> str:
-        return self.title.strip() or self.path.stem
+        """Its title; a note without one shows its first words, which say
+        more than "Note 2026-10-05 14.16"."""
+        if self.title.strip():
+            return self.title.strip()
+        if self.first_line:
+            words = self.first_line.split()
+            short = " ".join(words[:8])
+            return short + ("…" if len(words) > 8 else "")
+        return self.path.stem
 
 
 @dataclass
@@ -69,7 +78,10 @@ def read_info(path: Path) -> NoteInfo:
         m = note.meta
         text = " ".join([m.title, m.speaker, m.date, m.place, note.summary,
                          note.plain_text()]).lower()
-        info = NoteInfo(path, m.title, m.date, m.started, text)
+        first = next((t for sec in note.sections
+                      for t in [sec.title] + [b.text for b in sec.blocks if b.text]
+                      if t.strip()), "")
+        info = NoteInfo(path, m.title, m.date, m.started, text, first.strip())
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
         info = NoteInfo(path, "", "", "", path.stem.lower())
     _CACHE[path] = (mtime, info)

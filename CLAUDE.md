@@ -68,6 +68,14 @@ the user's request.
   (2 s after a change, and before switching / quitting); deleting goes
   to the Trash, never a hard delete. Tests must point `library/root`
   at a temporary folder.
+- **Notes must never be lost.** Before a note file is overwritten its
+  current version goes to `<library>/.history/<meta.id>/` (`history.py`);
+  restoring always makes a new file. A file whose mtime changed since
+  this window read or wrote it is never overwritten (a copy is saved
+  instead). Only one KherveNote runs at a time (`QLockFile` in
+  `__main__`). Leaving a note finishes listening and stops the AI first;
+  an AI answer for a note that is no longer open is dropped, never
+  written into another note.
 - The page is one seamless surface: no page edges, borders or desk
   colour around the text.
 

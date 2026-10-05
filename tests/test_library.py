@@ -72,3 +72,9 @@ def test_names_paths_and_moves(tmp_path):
         library.move(folder, folder)
     renamed = library.rename(folder, "Surface science")
     assert renamed.name == "Surface science" and (renamed / "XPS intro.knote").exists()
+
+
+def test_untitled_notes_are_labelled_by_their_first_words(tmp_path):
+    _note(tmp_path, "a.knote", "", body="Photoemission basics and the three step model of it")
+    info = library.scan(tmp_path).notes[0]
+    assert info.label == "Photoemission basics and the three step model of…"

@@ -63,6 +63,8 @@ class LibraryPanel(QWidget):
         super().__init__(parent)
         self.root = Path(root)
         self.current: Optional[Path] = None
+        #: Folder of the open note while it has no file yet (just made).
+        self.pending: Optional[Path] = None
         self._sections: list[tuple[int, str, int]] = []
         self._expanded: set[str] = set()
 
@@ -114,7 +116,8 @@ class LibraryPanel(QWidget):
 
     def set_sections(self, sections) -> None:
         self._sections = sections
-        item = self._find(self.current)
+        item = self._find(self.current) if self.current is not None else next(
+            (i for i in self._all_items() if i.data(0, KIND) == "pending"), None)
         if item is not None:
             self._fill_sections(item)
 
@@ -133,6 +136,16 @@ class LibraryPanel(QWidget):
 
     def _add(self, parent: QTreeWidgetItem, folder: library.Folder, open_all: bool) -> None:
         style = self.style()
+        if self.pending is not None and Path(self.pending) == Path(folder.path):
+            it = QTreeWidgetItem(parent, ["New note — start writing to keep it", ""])
+            it.setData(0, KIND, "pending")
+            it.setData(0, PATH, "")
+            f = QFont(it.font(0))
+            f.setBold(True)
+            f.setItalic(True)
+            it.setFont(0, f)
+            it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self._fill_sections(it)
         for sub in folder.folders:
             it = QTreeWidgetItem(parent, [sub.name, ""])
             it.setData(0, PATH, str(sub.path))
@@ -156,6 +169,11 @@ class LibraryPanel(QWidget):
                 self._fill_sections(it)
                 it.setExpanded(True)
 
+    def set_pending(self, folder: Optional[Path]) -> None:
+        self.pending = Path(folder) if folder is not None else None
+        if self.pending is not None:
+            self._expanded.add(str(self.pending))
+
     def _fill_sections(self, note_item: QTreeWidgetItem) -> None:
         # Restore, not unblock: this also runs inside refresh().
         was = self.tree.blockSignals(True)
@@ -170,7 +188,8 @@ class LibraryPanel(QWidget):
         self.tree.blockSignals(was)
 
     def _contains_current(self, folder: library.Folder) -> bool:
-        return self.current is not None and folder.path in self.current.parents
+        here = self.current or (self.pending / "x" if self.pending is not None else None)
+        return here is not None and folder.path in here.parents
 
     def _all_items(self):
         stack = [self.tree.invisibleRootItem()]

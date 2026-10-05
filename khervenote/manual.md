@@ -38,12 +38,30 @@ with its date.
 
 **Notes save themselves** a couple of seconds after every change, and
 when you open another note or quit — there is no need to press Save.
-A new note gets its file as soon as something is written in it, named
-after its title (or "Note 2026-10-05 14.30" until it has one).
+A new note appears in the list straight away (*New note — start writing
+to keep it*) and gets its file as soon as something is written in it,
+named after its title. A note without a title is listed by its first
+words.
+
+**Your notes are kept safe:**
+
+- **Earlier versions** — before a note is saved over, the version on
+  disk is kept (one every few minutes, the last 40). *File ▸ Earlier
+  versions of this note…* opens any of them **as a copy**; the note you
+  have is never changed by it.
+- **One KherveNote at a time** — starting it a second time says so and
+  closes: two windows on the same note would save over each other.
+- **Changed elsewhere?** If a note's file was changed outside this window
+  (by a sync program, say), KherveNote does not save over it: your
+  version is saved as a separate copy next to it, and you are told.
+- **Leaving a note** (opening another, *+ Note*, quitting) first finishes
+  any listening — the last words and the recording stay with that note —
+  and stops any AI that was writing into it.
 
 All notes are ordinary `.knote` files in **Documents ▸ KherveNote**, the
 folders are ordinary folders: you can back them up or sync them like
-any files. *File ▸ Notes folder…* chooses another place.
+any files (earlier versions are in the hidden `.history` folder there).
+*File ▸ Notes folder…* chooses another place.
 
 ## 3. Sections and styles
 

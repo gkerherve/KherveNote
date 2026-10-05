@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QDate, QEvent, QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, QEvent, QEventLoop, QObject, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction, QActionGroup, QDesktopServices, QImage, QKeySequence, QTextCursor,
 )
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from . import __version__, compiler, documents, icons, library, local_ai, theme
+from . import __version__, compiler, documents, history, icons, library, local_ai, theme
 from .editor import (
     STYLES, NoteEditor, block_kind, document_to_note, insert_section, load_note,
 )
@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
         self.doc_panel.ask.connect(self._doc_ask)
         self.editor.files_dropped.connect(self.add_files)
         self._new_note_folder: Optional[Path] = None
+        self._disk_mtime: Optional[float] = None
         self._autosave_timer = QTimer(self, singleShot=True, interval=2000)
         self._autosave_timer.timeout.connect(self.autosave)
 
@@ -445,6 +446,8 @@ class MainWindow(QMainWindow):
         m.addAction(self.act_pdf)
         m.addAction(self.act_tex)
         m.addSeparator()
+        m.addAction(A("Earlier &versions of this note…", self.show_versions, None,
+                      "Every note keeps its earlier versions — open one as a copy"))
         m.addAction(A("Notes &folder…", self.choose_library, None,
                       "Where all notes are kept (the Notes panel shows this folder)"))
         m.addSeparator()
@@ -645,6 +648,7 @@ class MainWindow(QMainWindow):
         self._ai_job = job
         self._ai_busy = True
         self.ai_bar.start(title)
+        owner = self.note
 
         def done(result) -> None:
             self._ai_busy = False
@@ -652,6 +656,11 @@ class MainWindow(QMainWindow):
             self.ai_bar.stop()
             if result[0] == "cancelled":
                 self.statusBar().showMessage("Cancelled", 3000)
+                return
+            if self.note is not owner:
+                # Its note was left meanwhile; never write into another one.
+                self.statusBar().showMessage("The AI's answer was not written: another note "
+                                             "is open now.", 6000)
                 return
             on_result(result)
         sig.done.connect(done)
@@ -747,6 +756,7 @@ class MainWindow(QMainWindow):
 
     def _set_note(self, note: Note, path: Optional[Path] = None) -> None:
         self.note, self.path = note, path
+        self._disk_mtime = None
         (self.act_paged if note.meta.layout == "paged" else self.act_continuous).setChecked(True)
         self.editor.work_dir = self.work_dir
         self.header.load(note)
@@ -757,6 +767,8 @@ class MainWindow(QMainWindow):
         self.speech.set_segments(note.transcript, self._time_label)
         self._header_dirty = False
         self._update_title()
+        self.library.set_pending(None if path is not None
+                                 else (self._new_note_folder or self.library.root))
         self.library.set_current(path, self.editor.headings())
         if path is not None:
             self.settings.setValue("library/last", str(path))
@@ -946,6 +958,17 @@ class MainWindow(QMainWindow):
             self._stop_listening()
             QMessageBox.warning(self, "Listen", message)
 
+    def _finish_listening(self) -> None:
+        session = self.session
+        if session is None:
+            return
+        self._stop_listening()
+        if self.session is session:
+            loop = QEventLoop()
+            session.finished.connect(loop.quit)
+            QTimer.singleShot(30000, loop.quit)
+            loop.exec()
+
     def _session_done(self, session, model: str) -> None:
         if session.engine is not None:
             self._engine = (model, session.engine)
@@ -957,7 +980,7 @@ class MainWindow(QMainWindow):
         self.speech.set_state("Stopped. Press Listen to carry on — the new lines are added "
                               "below.")
         path = Path(session.audio_path)
-        if path.exists() and session.duration > 0:
+        if path.exists() and session.duration > 0 and self.work_dir in path.parents:
             rel = path.relative_to(self.work_dir).as_posix()
             self.note.recordings.append(Recording(rel, session.t0, session.duration))
             self._header_changed()
@@ -1039,7 +1062,12 @@ class MainWindow(QMainWindow):
         return self.save()
 
     def _flush(self) -> bool:
-        """Save the open note before leaving it; False to stay."""
+        """Save the open note before leaving it; False to stay.  Listening
+        is finished first, so its last words and its recording stay with
+        this note, and an AI job writing into it is stopped."""
+        self._finish_listening()
+        if self._ai_job is not None:
+            self._cancel_ai()
         if self.autosave():
             return True
         r = QMessageBox.question(self, "KherveNote",
@@ -1085,22 +1113,47 @@ class MainWindow(QMainWindow):
             return
         self.settings.setValue("files/last_dir", str(path.parent))
         self._set_note(note, path)
+        self._disk_mtime = path.stat().st_mtime
 
     def save(self) -> bool:
         if self.path is None:
             self.path = library.new_note_path(self._new_note_folder or self.library.root,
                                               self.header.title.text())
+        note = self._sync_note()
         try:
-            save_knote(self._sync_note(), self.path, self.work_dir)
+            self._before_overwrite(note)
+            save_knote(note, self.path, self.work_dir)
         except OSError as exc:
             QMessageBox.warning(self, "KherveNote", f"Could not save:\n{exc}")
             return False
         self._name_after_title()
+        self._disk_mtime = self.path.stat().st_mtime
+        self.library.set_pending(None)
         self._mark_clean()
         self.settings.setValue("library/last", str(self.path))
         self.library.set_current(self.path, self.editor.headings())
         self.statusBar().showMessage(f"Saved {self.path.name}", 2000)
         return True
+
+    def _before_overwrite(self, note: Note) -> None:
+        """Never lose what is on disk: keep it as an earlier version and,
+        if someone else changed the file since this window last read or
+        wrote it (a second window, a sync program), save this window's
+        note as a separate copy instead of overwriting theirs."""
+        if not self.path.exists():
+            return
+        changed = (self._disk_mtime is not None
+                   and abs(self.path.stat().st_mtime - self._disk_mtime) > 0.5)
+        history.snapshot(self.library.root, note.meta.id, self.path, force=changed)
+        if changed:
+            theirs = self.path
+            self.path = library.unique_path(
+                theirs.parent, f"{theirs.stem} (this window {datetime.now():%H.%M})")
+            note.meta.id = uuid.uuid4().hex
+            QMessageBox.warning(self, "KherveNote", (
+                f"“{theirs.name}” was changed outside this window (another KherveNote "
+                "window or a sync program?).\n\nNothing is overwritten: this window's "
+                f"note is saved as “{self.path.name}”, next to it."))
 
     def _name_after_title(self) -> None:
         """A note first saved before it had a title is called "Note <date>";
@@ -1132,6 +1185,21 @@ class MainWindow(QMainWindow):
             self._mark_clean()
             self._fresh_work_dir()
             self._set_note(Note.new())
+
+    def show_versions(self) -> None:
+        from .versions_dialog import VersionsDialog
+        self.autosave()
+        dlg = VersionsDialog(history.versions(self.library.root, self.note.meta.id), self)
+        if dlg.exec() and dlg.chosen is not None:
+            stem = f"{(self.header.title.text().strip() or 'Note')} (from "\
+                   f"{dlg.chosen.when:%d %b %H.%M})"
+            folder = self.path.parent if self.path else self.library.root
+            copy = history.restore_copy(dlg.chosen.path, folder, library.safe_name(stem))
+            self.library.refresh()
+            if self._flush():
+                self.open_path(copy)
+            self.statusBar().showMessage(f"Restored as {copy.name} — the note you had is "
+                                         "unchanged", 8000)
 
     def choose_library(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Folder for all notes",

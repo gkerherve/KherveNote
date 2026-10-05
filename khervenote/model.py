@@ -164,10 +164,15 @@ class Meta:
     #: ISO timestamp of when the session started; block times count from it.
     started: str = ""
     layout: str = "continuous"
+    #: Stays with the note when its file is moved or renamed; names its
+    #: folder of earlier versions.
+    id: str = ""
 
     def __post_init__(self) -> None:
         if self.layout not in LAYOUTS:
             self.layout = "continuous"
+        if not self.id:
+            self.id = uuid.uuid4().hex
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)

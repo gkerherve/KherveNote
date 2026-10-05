@@ -171,3 +171,110 @@ def test_speech_into_the_page_option(win):
     win.settings.setValue("speech/into_page", True)
     win._on_speech("said in the page", 5.0)
     assert win.editor.toPlainText() == "said in the page" and not win.note.transcript
+
+
+def test_earlier_versions_are_kept_when_a_note_is_saved_again(win, tmp_path):
+    import os
+
+    from khervenote import history
+    QTest.keyClicks(win.editor, "version one")
+    win.autosave()
+    path = win.path
+    os.utime(path, (1000, 1000))                 # saved long ago
+    win._disk_mtime = 1000
+    QTest.keyClicks(win.editor, " and two")
+    win.autosave()
+    kept = history.versions(tmp_path / "lib", win.note.meta.id)
+    assert len(kept) == 1 and kept[0].first_line == "version one"
+    assert not (tmp_path / "lib" / ".history").name in [i.text(0) for i in
+                                                        win.library._all_items()]
+
+
+def test_a_file_changed_elsewhere_is_never_overwritten(win, tmp_path, monkeypatch):
+    import os
+
+    from khervenote.knote_file import load_knote, save_knote
+    from khervenote.model import Note
+    QTest.keyClicks(win.editor, "mine")
+    win.autosave()
+    path = win.path
+    other = Note.new()
+    other.add_block("typed", "written by another window")
+    save_knote(other, path, tmp_path)
+    os.utime(path, (path.stat().st_mtime + 30,) * 2)
+    warned = []
+    monkeypatch.setattr(mainwindow_qmessagebox(), "warning", lambda *a, **k: warned.append(a))
+    QTest.keyClicks(win.editor, " more")
+    win.autosave()
+    assert warned and win.path != path
+    assert load_knote(path, tmp_path / "x").sections[0].blocks[0].text == "written by another window"
+    assert load_knote(win.path, tmp_path / "y").sections[0].blocks[0].text == "mine more"
+
+
+def mainwindow_qmessagebox():
+    from khervenote import mainwindow
+    return mainwindow.QMessageBox
+
+
+def test_a_new_note_is_listed_at_once(win):
+    QTest.keyClicks(win.editor, "first note")
+    win.new_note()
+    labels = [win.library.tree.topLevelItem(i).text(0)
+              for i in range(win.library.tree.topLevelItemCount())]
+    assert labels[0].startswith("New note") and "first note" in labels
+    QTest.keyClicks(win.editor, "second note")
+    win.autosave()
+    labels = [win.library.tree.topLevelItem(i).text(0)
+              for i in range(win.library.tree.topLevelItemCount())]
+    assert sorted(labels) == ["first note", "second note"]
+
+
+def test_leaving_a_note_finishes_listening_into_that_note(win, tmp_path):
+    from PySide6.QtCore import QObject, QTimer, Signal
+
+    class Session(QObject):
+        finished = Signal()
+        duration, t0, engine, preview = 4.0, 0.0, None, None
+
+        def __init__(self, path):
+            super().__init__()
+            self.audio_path = str(path)
+
+        def stop(self):
+            QTimer.singleShot(20, self.finished.emit)
+    (win.work_dir / "assets").mkdir(exist_ok=True)
+    rec = win.work_dir / "assets" / "rec-1.ogg"
+    rec.write_bytes(b"ogg")
+    s = Session(rec)
+    s.finished.connect(lambda: win._session_done(s, "base"))
+    win.session = s
+    win.act_listen.setChecked(True)
+    QTest.keyClicks(win.editor, "lecture")
+    first = None
+    win.autosave()
+    first = win.path
+    win.new_note()
+    assert win.session is None
+    from khervenote.knote_file import load_knote
+    saved = load_knote(first, tmp_path / "check")
+    assert [r.path for r in saved.recordings] == ["assets/rec-1.ogg"]
+    assert win.note.recordings == []
+
+
+def test_an_ai_answer_never_lands_in_another_note(win, monkeypatch, app):
+    import threading
+    import time
+
+    from khervenote import local_ai
+    monkeypatch.setattr(local_ai, "list_models", lambda: ["m"])
+    go = threading.Event()
+    written = []
+    QTest.keyClicks(win.editor, "note A")
+    win._run_ai("test", lambda model: (go.wait(5), "answer")[1], written.append)
+    win.new_note()                       # leaves note A while the AI works
+    go.set()
+    t = time.time()
+    while win._ai_busy and time.time() - t < 5:
+        app.processEvents()
+        time.sleep(0.01)
+    assert written == [] and win.editor.toPlainText() == ""
