@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -79,24 +80,114 @@ def list_models() -> list[str]:
     return sorted(m["name"] for m in _request("/api/tags", timeout=3).get("models", []))
 
 
+class Cancelled(Exception):
+    """The user pressed Cancel while the model was writing."""
+
+
+class Job:
+    """What a running AI task tells the window: each piece of text as it
+    is written (*on_text*), which step it is on (*on_step*), and whether
+    the user cancelled.  Set for the calling thread with ``Job.run``."""
+
+    def __init__(self, on_text=None, on_step=None) -> None:
+        self.on_text = on_text
+        self.on_step = on_step
+        self.cancelled = threading.Event()
+        #: Parallel parts would interleave their words; they stay quiet.
+        self.quiet = False
+
+    def step(self, text: str) -> None:
+        if self.on_step:
+            self.on_step(text)
+
+    def run(self, fn, *args):
+        _current.job = self
+        try:
+            return fn(*args)
+        finally:
+            _current.job = None
+
+
+_current = threading.local()
+
+
+def current_job() -> Optional[Job]:
+    return getattr(_current, "job", None)
+
+
 def chat(model: str, system: str, text: str, timeout: float = 600.0,
-         context: int = 8192) -> str:
+         context: int = 8192, limit: Optional[int] = None) -> str:
     # Ollama's default window (often 4096 tokens) would silently cut off
-    # a document extract; ask for room for it.
-    payload = {"model": model, "stream": False,
-               "options": {"temperature": 0.3, "num_ctx": context},
+    # a document extract; ask for room for it.  *limit* caps the reply.
+    options = {"temperature": 0.3, "num_ctx": context}
+    if limit:
+        options["num_predict"] = limit
+    payload = {"model": model, "stream": False, "options": options,
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": text}]}
+    job = current_job()
+    send = (lambda body: _stream(body, job, timeout)) if job else \
+        (lambda body: _request("/api/chat", body, timeout).get("message", {}).get("content", ""))
     try:
         # Reasoning models would otherwise spend minutes "thinking" about
         # a paragraph; servers that predate the flag reject it.
-        reply = _request("/api/chat", dict(payload, think=False), timeout)
+        content = send(dict(payload, think=False))
     except OllamaError as exc:
         if "think" not in str(exc).lower():
             raise
-        reply = _request("/api/chat", payload, timeout)
-    content = reply.get("message", {}).get("content", "")
+        content = send(payload)
     return _THINK_RE.sub("", content).strip()
+
+
+def _stream(payload: dict, job: Job, timeout: float) -> str:
+    """The reply, read word by word so the window can show it being
+    written and Cancel can stop it at once."""
+    req = urllib.request.Request(base_url() + "/api/chat",
+                                 data=json.dumps(dict(payload, stream=True)).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"})
+    parts = []
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            for line in resp:
+                if job.cancelled.is_set():
+                    raise Cancelled()
+                if not line.strip():
+                    continue
+                msg = json.loads(line)
+                if "error" in msg:
+                    raise OllamaError(f"Ollama answered: {msg['error']}")
+                piece = msg.get("message", {}).get("content", "")
+                if piece:
+                    parts.append(piece)
+                    if job.on_text and not job.quiet:
+                        job.on_text(piece)
+                if msg.get("done"):
+                    break
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise OllamaError(f"Ollama answered {exc.code}: {detail[:300]}") from exc
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        raise OllamaError("Ollama is not running on this computer "
+                          f"({base_url()}). Start it with `ollama serve`.") from exc
+    return "".join(parts)
+
+
+def _parallel(fn, items: list, workers: int = 2) -> list:
+    """*fn* over *items*, a few at a time — Ollama can work on more than
+    one request when memory allows — keeping the order and the job."""
+    from concurrent.futures import ThreadPoolExecutor
+    job = current_job()
+    if job is not None:
+        job.quiet = True
+
+    def call(item):
+        return job.run(fn, item) if job is not None else fn(item)
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(call, items))
+    finally:
+        if job is not None:
+            job.quiet = False
 
 
 SUMMARISE = (
@@ -173,24 +264,43 @@ DOC_ANSWER = (
     "Reply with the section text only, without a title.")
 
 
-def summarise_document(model: str, doc, budget: int = 9000) -> str:
+def _step(text: str) -> None:
+    job = current_job()
+    if job is not None:
+        job.step(text)
+
+
+def summarise_document(model: str, doc, budget: int = 20000) -> str:
     """Summary of a whole document; a long one is summarised in parts
-    first, then the parts are combined."""
+    (two at a time) first, then the parts are combined."""
     from .documents import batches
     parts = batches(doc, budget)
     head = f"Document: {doc.name}\n\n"
     if len(parts) == 1:
-        return chat(model, DOC_SUMMARY, head + parts[0], context=16384)
-    notes = [chat(model, DOC_PART_SUMMARY, head + part, context=16384) for part in parts]
-    return chat(model, DOC_SUMMARY, head + "\n".join(notes), context=16384)
+        _step("Writing the summary")
+        return chat(model, DOC_SUMMARY, head + parts[0], context=16384, limit=900)
+    _step(f"Reading the document in {len(parts)} parts")
+    done = [0]
+
+    def part(text: str) -> str:
+        out = chat(model, DOC_PART_SUMMARY, head + text, context=16384, limit=600)
+        done[0] += 1
+        _step(f"Read {done[0]} of {len(parts)} parts")
+        return out
+    notes = _parallel(part, parts)
+    _step("Writing the summary")
+    return chat(model, DOC_SUMMARY, head + "\n".join(notes), context=16384, limit=900)
 
 
 def summarise_section(model: str, doc_name: str, title: str, text: str) -> str:
+    _step(f"Summarising “{title}”")
     return chat(model, DOC_SUMMARY,
-                f"Document: {doc_name}\nSection: {title}\n\n{text[:30000]}", context=16384)
+                f"Document: {doc_name}\nSection: {title}\n\n{text[:30000]}",
+                context=16384, limit=900)
 
 
 def answer(model: str, doc, question: str) -> str:
+    _step("Reading the passages that match the question")
     from .documents import best_passages
     extracts = "\n\n".join(f"[{p.where}]\n{p.text}" for p in best_passages(doc, question))
     return chat(model, DOC_ANSWER,
@@ -200,20 +310,24 @@ def answer(model: str, doc, question: str) -> str:
 
 def summarise_each_section(model: str, doc, progress=None, max_parts: int = 24) -> str:
     """A "## title" heading and key points for every top-level section,
-    one model call each.  A document cut into many small sections (one
-    per page, say) is grouped into at most *max_parts* parts first."""
-    groups = _section_groups(doc, max_parts)
-    out = []
-    for i, (title, text) in enumerate(groups, 1):
-        if progress:
-            progress(f"Summarising section {i} of {len(groups)}: {title}…")
-        if len(text.strip()) < 80:
-            continue
+    two at a time.  A document cut into many small sections (one per
+    page, say) is grouped into at most *max_parts* parts first."""
+    groups = [g for g in _section_groups(doc, max_parts) if len(g[1].strip()) >= 80]
+    done = [0]
+
+    def one(group) -> str:
+        title, text = group
         points = chat(model, DOC_PART_SUMMARY,
                       f"Document: {doc.name}\nSection: {title}\n\n{text[:30000]}",
-                      context=16384)
-        out.append(f"## {title}\n{points.strip()}")
-    return "\n\n".join(out)
+                      context=16384, limit=500)
+        done[0] += 1
+        msg = f"Summarised {done[0]} of {len(groups)} sections"
+        _step(msg)
+        if progress:
+            progress(msg)
+        return f"## {title}\n{points.strip()}"
+    _step(f"Summarising {len(groups)} sections")
+    return "\n\n".join(_parallel(one, groups))
 
 
 def _section_groups(doc, max_parts: int) -> list[tuple[str, str]]:
@@ -234,3 +348,54 @@ def _section_groups(doc, max_parts: int) -> list[tuple[str, str]]:
             merged.append([title, "\n\n".join(t for _, t in chunk)])
         groups = merged
     return [(t, x) for t, x in groups]
+
+
+# ── the speech transcript and the user's notes ──────────────────────
+
+FILL_FROM_SPEECH = (
+    "You are given someone's own notes for one part of a talk, and the "
+    "transcript of what the speaker said during that part. Write, as short "
+    "bullet lines starting with '- ', the important points the speaker made "
+    "that the notes do not already contain. Keep facts, numbers and names "
+    "exactly, in the language of the talk. Do not repeat what the notes "
+    "already say. If the notes already cover everything, reply exactly: "
+    "Nothing to add.")
+
+NOTES_FROM_SPEECH = (
+    "Turn this transcript of a talk into clear lecture notes in the language "
+    "of the talk: '## ' headings for the topics in the order they came, and "
+    "under each, short paragraphs or bullet lines starting with '- '. Keep "
+    "facts, numbers and names exactly; drop hesitations, repetitions and "
+    "small talk. Reply with the notes only.")
+
+SPEECH_PART = (
+    "Summarise this part of a talk's transcript as bullet lines starting "
+    "with '- ', keeping facts, numbers and names. Reply with the bullets only.")
+
+
+def fill_from_speech(model: str, notes: str, speech: str) -> str:
+    _step("Comparing your notes with what was said")
+    return chat(model, FILL_FROM_SPEECH,
+                f"My notes:\n{notes or '(nothing written)'}\n\nTranscript:\n{speech[:40000]}",
+                context=16384, limit=700)
+
+
+def notes_from_speech(model: str, transcript: str, budget: int = 18000) -> str:
+    """Notes from a transcript; a long one is condensed part by part
+    (two at a time) first."""
+    if len(transcript) <= budget:
+        _step("Writing notes from the speech")
+        return chat(model, NOTES_FROM_SPEECH, transcript, context=16384, limit=1500)
+    lines, parts, buf = transcript.splitlines(), [], ""
+    for line in lines:
+        if buf and len(buf) + len(line) > budget:
+            parts.append(buf)
+            buf = ""
+        buf += line + "\n"
+    if buf:
+        parts.append(buf)
+    _step(f"Reading the speech in {len(parts)} parts")
+    condensed = _parallel(lambda part: chat(model, SPEECH_PART, part, context=16384,
+                                            limit=700), parts)
+    _step("Writing notes from the speech")
+    return chat(model, NOTES_FROM_SPEECH, "\n".join(condensed), context=16384, limit=1500)

@@ -112,3 +112,20 @@ def test_markdown_blocks():
         ("item", "one", 0, False), ("item", "sub", 1, False), ("item", "first", 0, True),
         ("heading", "More", 3, False), ("typed", "text", 0, False)]
     assert blocks[1].marks == [[4, 7, "b"]]
+
+
+def test_transcript_times_and_windows():
+    from datetime import datetime
+    from khervenote.model import Segment
+    n = Note.new(datetime(2026, 10, 5, 10, 0, 0))
+    n.transcript = [Segment(5, "hello"), Segment(65, "kinetics"), Segment(3700, "end")]
+    back = Note.from_dict(n.to_dict())
+    assert back.transcript == n.transcript
+    assert n.time_label(65) == "10:01:05"
+    assert n.time_label(65, seconds=False) == "10:01"
+    assert n.time_label(3700, clock=False) == "1:01:40"
+    assert [g.text for g in n.speech_between(60, 3700)] == ["kinetics"]
+    assert [g.text for g in n.speech_between(None, 60)] == ["hello"]
+    assert "[10:01:05] kinetics" in n.plain_text()
+    n.meta.started = ""
+    assert n.time_label(65) == "01:05"

@@ -27,19 +27,15 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   the toolbar buttons). **Tab** makes a sub-item — numbered sub-items
   export as 1.1, 1.2, 1.2.1 — Shift+Tab goes back, Enter on an empty item
   leaves the list.
-- **Listen** (the microphone, Ctrl+L): the words appear on the page *as
-  they are spoken* (grey italic, refreshed about twice a second), then
-  settle into the final transcript a second after the speaker pauses.
-  A "● listening…" mark sits where the words will appear, and shows the
-  download / loading state the first time. Keep typing your own notes
-  meanwhile — the speech goes in above the line you are writing. Press
-  again to stop — or just press Space or Return in the page (switch that
-  off under *Speech*).
-  Speech-to-text is **Whisper running on this computer** (faster-whisper):
-  the audio never leaves it. The model downloads once (*Speech ▸ Model*:
-  tiny … large; Small by default), then it works offline. *Speech ▸
-  Language* and *Speech ▸ Microphone* choose the rest. The recording is
-  kept inside the `.knote`.
+- **Listen** (Ctrl+L): what is said is written in the **Speech panel**
+  beside your notes, line by line, each with the time of day it was said
+  — the words appear live as they are spoken. Your own lines carry the
+  time they were written, so the two are linked: click a paragraph to
+  highlight what was said just before, click a time to jump to what you
+  were writing. The AI can **fill in a section** from what was said, or
+  **make notes from the speech**. Speech-to-text is **Whisper running on
+  this computer** (faster-whisper): the audio never leaves it. The model
+  downloads once (*Speech ▸ Model*), then works offline.
 - **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z, or the ↶ ↷ buttons) take back
   anything, including what the AI or the microphone wrote.
 - **Local AI** (Ollama, on this computer): right-click on the page, the
@@ -49,7 +45,8 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   - *Summarise* (Ctrl+Alt+S) adds the key points of the section (or the
     selection) as a key-point box.
   - *Summarise the whole note* writes the summary at the top.
-  Pick the model under *AI ▸ Local AI model*. Ctrl+Z undoes any of them.
+  A bar above the page shows the AI at work (step, time, the text as it
+  is written, Cancel). Ctrl+Z undoes any of it.
   Needs [Ollama](https://ollama.com): *AI ▸ Set up the local AI…* links
   to it, installs a model in one click and compares them (Qwen, Granite,
   Gemma, Llama).

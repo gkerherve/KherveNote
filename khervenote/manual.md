@@ -17,10 +17,10 @@ Click anywhere and type, as in a notepad.
 - At the top: the **title** of the talk, then **speaker**, **date** and
   **place** — click any of them to change it. The 📅 button next to the
   date opens a calendar.
-- To the left of each paragraph, in grey: the **time** in the session
-  when it was written (or said). The clock starts when the note is
-  created; *Note ▸ Restart session clock* starts it again when the talk
-  really begins.
+- To the left of each paragraph, in grey: the **time of day** it was
+  written, to the second (e.g. 14:31:04) — taken when you start typing
+  the line. *View ▸ Show times as the time of day* switches to the time
+  since the note began (31:04) instead.
 ## 2. Your notes — the Notes panel
 
 The panel on the left holds **every note**, in folders, newest first,
@@ -81,20 +81,46 @@ Press Return after a heading and you are back to ordinary text.
   the list. Numbered sub-items come out as 1.1, 1.2, 1.2.1 in the PDF.
 - **Shift+Return** starts a new line inside the same paragraph.
 
-## 5. Listening — the microphone
+## 5. Listening — the speech beside your notes
 
-Press **Listen** in the toolbar (or **Ctrl+L**).
+Press **Listen** (in the toolbar, at the top of the **Speech** panel on
+the right, or **Ctrl+L**).
 
-- A grey **● listening…** mark appears where the words will be written.
-- While the person speaks, their words appear **live**, in grey
-  italics. When they pause, the words settle into the final transcript
-  (grey, upright) — a second or so later.
-- **To stop**, press **Listen** again — or simply **press Space or
-  Return** in the page: as on a phone, starting to type yourself ends
-  the dictation. If you would rather keep listening while you type your
-  own notes, untick *Speech ▸ Stop listening when I press Space or
-  Return*; the speech then goes in just above the line you are typing.
-- You can switch it on and off as often as you like.
+- **Your notes** stay on the page: you write, make sections and
+  headings as usual.
+- **What is said** is written in the **Speech** panel on the right, one
+  line per stretch of speech, each with the **time it was said**
+  (14:31:04). The words being spoken appear live, in italics, under the
+  last line, and settle into a new line a second after the speaker
+  pauses.
+- Press **Listen** again to stop; you can switch it on and off as often
+  as you like — new lines are added below.
+
+**The two are linked by time:**
+
+- Click in a paragraph of your notes: the speech said **in the minute
+  before** you wrote it is highlighted in the Speech panel.
+- Click a **time** in the Speech panel: the page jumps to what you were
+  writing then (it flashes briefly).
+- Right-click a line (or a selection) of speech: *Insert into my notes*,
+  *Show my notes at this time*, *Make notes from the selection*.
+
+**…and by the AI** (buttons under the Speech panel, or the *AI* menu):
+
+- **Fill in my section** — the AI reads what was said while the section
+  you are in was being written, compares it with your notes, and adds
+  the points you missed under a **From the speech (14:31:04–14:38:12)**
+  heading at the end of that section.
+- **Fill in every section from the speech** (*AI* menu) — the same for
+  each section in turn.
+- **Make notes from the speech** — turns what was said (the selected
+  lines, or all of it) into structured notes with headings, added at the
+  end of the note.
+
+*Speech ▸ Write the speech into the page* puts the speech into the page
+itself instead, as in earlier versions, above the line you are typing.
+*Speech ▸ Stop listening when I press Space or Return* (off by default)
+ends the listening as soon as you type.
 
 Everything happens **on this computer**: the speech recognition
 (Whisper) runs locally and the audio never leaves it. The recording is
@@ -169,6 +195,11 @@ Every model Ollama has is listed under *AI ▸ Local AI model* —
 including custom ones made for other apps, such as the *xps-expert*
 models built for KherveFitting, which are marked as such and are not
 meant for notes.
+
+**While the AI works** a bar appears above the page: what it is doing
+("Read 2 of 3 parts"), how long it has taken, the words it is writing
+as they come, and **Cancel**. A small local model can take a minute or
+two over a long document — the bar shows it is working.
 
 **Not happy with what the AI wrote? Press Undo** (Ctrl+Z, or the ↶
 button): each AI change is one undo step.
@@ -247,6 +278,8 @@ Text typed after a picture on the same line becomes its caption.
   - *Export ▸ A4 pages*: ordinary pages for printing.
   - *Export ▸ Show times in export* adds the time of each paragraph in
     the margin.
+  - *Export ▸ Add what was said (transcript) at the end* adds the speech,
+    with its times, as a last section.
 - **Export LaTeX** writes the `.tex` file (and its pictures) to edit or
   compile elsewhere, e.g. in KherveTeX.
 
@@ -261,7 +294,7 @@ Text typed after a picture on the same line becomes its caption.
 |---|---|
 | New / Open / Save | Ctrl+N / Ctrl+O / Ctrl+S |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z |
-| Listen on / off | Ctrl+L (Space or Return also stop it) |
+| Listen on / off | Ctrl+L |
 | New section | Ctrl+Return |
 | Text / Section / Subsection / Sub-subsection | Ctrl+0 / 1 / 2 / 3 |
 | Key point / Question | Ctrl+Shift+K / Ctrl+Shift+Q |

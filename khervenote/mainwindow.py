@@ -26,13 +26,17 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, compiler, documents, icons, library, local_ai, theme
-from .editor import STYLES, NoteEditor, document_to_note, insert_section, load_note
+from .editor import (
+    STYLES, NoteEditor, block_kind, document_to_note, insert_section, load_note,
+)
 from .knote_file import EXTENSION, load_knote, save_knote
 from .library_panel import LibraryPanel
 from .model import Note
 from .audio import input_devices
+from .ai_status import AIStatusBar
 from .document_panel import DocumentPanel, DropHint
-from .model import Attachment, Recording, markdown_blocks
+from .speech_panel import SpeechPanel
+from .model import Attachment, Recording, Segment, markdown_blocks
 from .permissions import with_permission
 from .serializer import CONTINUOUS_LIMIT_MM, format_time, to_latex
 from .transcriber import DEFAULT_MODEL, LANGUAGES, MODELS, ListenSession, download_progress, missing_packages
@@ -165,15 +169,19 @@ class NoteHeader(QFrame):
 
 
 class Page(QWidget):
-    """Header over editor, sharing one column so their text lines up."""
+    """Header over editor, sharing one column so their text lines up;
+    the AI bar sits between them while the AI works."""
 
-    def __init__(self, header: NoteHeader, editor: NoteEditor) -> None:
+    def __init__(self, header: NoteHeader, editor: NoteEditor, ai_bar: QWidget) -> None:
         super().__init__()
-        self.header, self.editor = header, editor
+        self.header, self.editor, self.ai_bar = header, editor, ai_bar
         col = QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
         col.addWidget(header)
+        self._bar_row = QHBoxLayout()
+        self._bar_row.addWidget(ai_bar)
+        col.addLayout(self._bar_row)
         col.addWidget(editor, 1)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
@@ -184,6 +192,7 @@ class Page(QWidget):
         m = self.editor.viewportMargins()
         margin = int(self.editor.document().documentMargin())
         self.header.set_column(m.left() + margin, m.right() + margin)
+        self._bar_row.setContentsMargins(m.left() + margin - 12, 6, m.right() + margin - 12, 0)
 
 
 _AUTO_NAME = re.compile(r"^Note \d{4}-\d\d-\d\d \d\d\.\d\d( \(\d+\))?$")
@@ -191,6 +200,12 @@ _AUTO_NAME = re.compile(r"^Note \d{4}-\d\d-\d\d \d\d\.\d\d( \(\d+\))?$")
 
 class _Signals(QObject):
     done = Signal(object)
+
+
+class _AISignals(QObject):
+    done = Signal(object)
+    text = Signal(str)
+    step = Signal(str)
 
 
 class MainWindow(QMainWindow):
@@ -220,7 +235,10 @@ class MainWindow(QMainWindow):
         self._ai_busy = False
         self.header = NoteHeader()
         self.header.changed.connect(self._header_changed)
-        self.setCentralWidget(Page(self.header, self.editor))
+        self.ai_bar = AIStatusBar()
+        self.ai_bar.cancel.connect(self._cancel_ai)
+        self._ai_job = None
+        self.setCentralWidget(Page(self.header, self.editor, self.ai_bar))
 
         self.library = LibraryPanel(Path(self.settings.value(
             "library/root", str(library.default_root()))))
@@ -239,6 +257,19 @@ class MainWindow(QMainWindow):
         self.doc_dock.setWidget(self.doc_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, self.doc_dock)
         self.doc_dock.hide()
+        self.speech = SpeechPanel()
+        self.speech_dock = QDockWidget("Speech", self)
+        self.speech_dock.setObjectName("speech")
+        self.speech_dock.setWidget(self.speech)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.speech_dock)
+        self.speech.jump_requested.connect(self.editor.go_to_time)
+        self.speech.insert_requested.connect(lambda text, t: self.editor.insert_paragraph(text))
+        self.speech.notes_requested.connect(self._notes_from_speech)
+        self.speech.fill_section_requested.connect(self._fill_section)
+        self._corr_timer = QTimer(self, singleShot=True, interval=200)
+        self._corr_timer.timeout.connect(self._correlate)
+        self.editor.cursorPositionChanged.connect(self._corr_timer.start)
+        self.editor.time_label = self._time_label
         self._docs: dict[str, object] = {}
         self._doc_att: Optional[Attachment] = None
         self.header.drop_hint.clicked.connect(self.attach_dialog)
@@ -280,6 +311,9 @@ class MainWindow(QMainWindow):
         timer.start(1000)
 
         self._build_actions()
+        self.speech.set_listen_action(self.act_listen)
+        self.tabifyDockWidget(self.speech_dock, self.doc_dock)
+        self.speech_dock.raise_()
         self._apply_theme()
         QApplication.styleHints().colorSchemeChanged.connect(lambda *_: self._apply_theme())
         last = Path(self.settings.value("library/last", "") or "/nonexistent")
@@ -317,7 +351,7 @@ class MainWindow(QMainWindow):
                                  lambda on: self.settings.setValue("speech/stop_on_key", on))
         self.act_stop_on_key.setCheckable(True)
         self.act_stop_on_key.setChecked(
-            self.settings.value("speech/stop_on_key", True, type=bool))
+            self.settings.value("speech/stop_on_key", False, type=bool))
         self.act_section = A("New section", lambda: ed.new_section(), "Ctrl+Return",
                              "Start a new section heading (Ctrl+Return) — or turn the "
                              "current line into one with Ctrl+1")
@@ -376,6 +410,19 @@ class MainWindow(QMainWindow):
         for a in (self.act_continuous, self.act_paged):
             a.setCheckable(True)
             layouts.addAction(a)
+        self.act_transcript = A("Add what was &said (transcript) at the end",
+                                lambda on: self.settings.setValue("export/transcript", on))
+        self.act_transcript.setCheckable(True)
+        self.act_transcript.setChecked(self.settings.value("export/transcript", False, type=bool))
+        self.act_clock_times = A("Show times as the &time of day", self._toggle_clock_times, None,
+                                 "Times beside your notes and the speech: the time of day "
+                                 "(14:31:04), or the time since the note began (31:04)")
+        self.act_clock_times.setCheckable(True)
+        self.act_clock_times.setChecked(self.settings.value("view/clock_times", True, type=bool))
+        self.act_into_page = A("Write the speech into the &page (instead of the side panel)",
+                               lambda on: self.settings.setValue("speech/into_page", on))
+        self.act_into_page.setCheckable(True)
+        self.act_into_page.setChecked(self._into_page())
         self.act_times = A("Show &times in export", self._toggle_times)
         self.act_times.setCheckable(True)
         self.act_times.setChecked(self.settings.value("export/show_times", False, type=bool))
@@ -434,7 +481,10 @@ class MainWindow(QMainWindow):
         m.addAction(self.act_continuous)
         m.addAction(self.act_paged)
         m.addAction(self.act_times)
+        m.addAction(self.act_transcript)
         m = mb.addMenu("&View")
+        m.addAction(self.act_clock_times)
+        m.addAction(self.speech_dock.toggleViewAction())
         sub = m.addMenu("&Theme")
         for a in self._theme_actions.values():
             sub.addAction(a)
@@ -478,6 +528,7 @@ class MainWindow(QMainWindow):
     def _build_speech_menu(self, menu) -> None:
         menu.addAction(self.act_listen)
         menu.addAction(self.act_stop_on_key)
+        menu.addAction(self.act_into_page)
         menu.addSeparator()
         models = menu.addMenu("&Model")
         group = QActionGroup(self)
@@ -512,6 +563,14 @@ class MainWindow(QMainWindow):
                                                "Write the summary at the top of the note")
         for a in (self.act_rephrase, self.act_summarise, self.act_summarise_note):
             menu.addAction(a)
+        menu.addSeparator()
+        menu.addAction(self._action("&Fill in this section from the speech", self._fill_section,
+                                    None, "Add what was said during this section and your "
+                                    "notes miss"))
+        menu.addAction(self._action("Fill in &every section from the speech",
+                                    self._fill_every_section))
+        menu.addAction(self._action("Make &notes from the speech",
+                                    lambda: self._notes_from_speech("")))
         menu.addSeparator()
         self._ai_model_menu = menu.addMenu("Local AI &model (Ollama)")
         menu.addAction(self._action("Set &up the local AI… (install Ollama, choose a model)",
@@ -563,25 +622,59 @@ class MainWindow(QMainWindow):
         text = original if cur is not None else self._sync_note().plain_text()
         if action == "summarise" and not ed.textCursor().hasSelection() and ed.section_title():
             text = f"Section: {ed.section_title()}\n\n{text}"
-        preferred = self.settings.value("ai/ollama_model", "")
         job = {"rephrase": local_ai.rephrase, "summarise": local_ai.summarise,
                "summarise_note": local_ai.summarise_note}[action]
-        signals = _Signals(self)
-        signals.done.connect(lambda res: self._ai_done(action, cur, original, res))
+        title = {"rephrase": "Rephrasing", "summarise": "Summarising the section",
+                 "summarise_note": "Summarising the whole note"}[action]
+        self._run_ai(title, lambda model: job(model, text),
+                     lambda res: self._ai_done(action, cur, original, res))
+
+    def _run_ai(self, title: str, fn, on_result) -> None:
+        """Run *fn(model)* with the local AI off the GUI thread, showing
+        progress, the text as it is written and Cancel in the AI bar;
+        then *on_result(("ok", text) | ("error", message))* — nothing at
+        all if the user cancelled."""
+        if self._ai_busy:
+            self.statusBar().showMessage("The local AI is still writing…", 4000)
+            return
+        preferred = self.settings.value("ai/ollama_model", "")
+        sig = _AISignals(self)
+        job = local_ai.Job(on_text=sig.text.emit, on_step=sig.step.emit)
+        sig.text.connect(self.ai_bar.add_text)
+        sig.step.connect(self.ai_bar.set_step)
+        self._ai_job = job
         self._ai_busy = True
-        self.statusBar().showMessage("The local AI is writing…")
+        self.ai_bar.start(title)
+
+        def done(result) -> None:
+            self._ai_busy = False
+            self._ai_job = None
+            self.ai_bar.stop()
+            if result[0] == "cancelled":
+                self.statusBar().showMessage("Cancelled", 3000)
+                return
+            on_result(result)
+        sig.done.connect(done)
 
         def work():
             try:
                 model = local_ai.pick_default(local_ai.list_models(), preferred)
                 if not model:
                     raise local_ai.OllamaError("Ollama has no models yet.")
-                signals.done.emit(("ok", job(model, text)))
+                sig.step.emit(f"{model} is reading…")
+                sig.done.emit(("ok", job.run(fn, model)))
+            except local_ai.Cancelled:
+                sig.done.emit(("cancelled", ""))
             except local_ai.OllamaError as exc:
-                signals.done.emit(("error", str(exc)))
+                sig.done.emit(("error", str(exc)))
             except Exception as exc:  # noqa: BLE001 — surface anything to the user
-                signals.done.emit(("error", f"The local AI failed: {exc}"))
+                sig.done.emit(("error", f"The local AI failed: {exc}"))
         threading.Thread(target=work, daemon=True).start()
+
+    def _cancel_ai(self) -> None:
+        if self._ai_job is not None:
+            self._ai_job.cancelled.set()
+            self.ai_bar.set_step("cancelling…")
 
     def _ai_done(self, action: str, cur, original: str, result) -> None:
         self._ai_busy = False
@@ -644,6 +737,7 @@ class MainWindow(QMainWindow):
         theme.apply(QApplication.instance(), self.settings.value("view/theme", "system"))
         self._set_icons()
         self.header.apply_theme()
+        self.ai_bar.apply_theme()
         modified = self.editor.document().isModified()
         self.editor.apply_theme()
         # Recolouring is not an edit.
@@ -660,6 +754,7 @@ class MainWindow(QMainWindow):
         self._doc_att = None
         self.doc_dock.hide()
         load_note(self.editor, note)
+        self.speech.set_segments(note.transcript, self._time_label)
         self._header_dirty = False
         self._update_title()
         self.library.set_current(path, self.editor.headings())
@@ -749,7 +844,7 @@ class MainWindow(QMainWindow):
                                      self.settings.value("speech/language", ""), device, self,
                                      engine=self._engine[1] if self._engine else None,
                                      preview=self._preview)
-        self.session.text.connect(self.editor.append_transcript)
+        self.session.text.connect(self._on_speech)
         self.session.partial.connect(self._on_partial)
         self.session.status.connect(self._on_listen_status)
         self.session.level.connect(self._on_level)
@@ -764,15 +859,37 @@ class MainWindow(QMainWindow):
         self.listen_label.setText("\u25cf Listening")
         self.listen_label.setStyleSheet(f"color:{theme.hex_('red')}; font-weight:bold;")
         self._listen_hint = "\u25cf getting the microphone ready…"
-        self.editor.show_partial(self._listen_hint)
+        self._show_live(self._listen_hint)
+        self.speech.set_state("Listening — each line shows when it was said; the newest is at "
+                              "the bottom. Click a time to see what you were writing then.")
+        self.speech_dock.show()
+        self.speech_dock.raise_()
         self.session.start()
         QTimer.singleShot(5000, lambda s=self.session: self._check_silence(s))
+
+    def _into_page(self) -> bool:
+        return self.settings.value("speech/into_page", False, type=bool)
+
+    def _show_live(self, text: str) -> None:
+        if self._into_page():
+            self.editor.show_partial(text)
+        else:
+            self.speech.set_live(text)
+
+    def _on_speech(self, text: str, t: float) -> None:
+        if self._into_page():
+            self.editor.append_transcript(text, t)
+            return
+        seg = Segment(t, text)
+        self.note.transcript.append(seg)
+        self.speech.add_segment(seg)
+        self._header_changed()
 
     def _on_partial(self, text: str) -> None:
         # Between utterances keep a visible "listening" mark where the
         # words will appear, so it never looks as if nothing is happening.
         if self.session is not None:
-            self.editor.show_partial(text or self._listen_hint)
+            self._show_live(text or self._listen_hint)
 
     def _on_listen_status(self, message: str) -> None:
         if message.startswith("Downloading"):
@@ -783,7 +900,7 @@ class MainWindow(QMainWindow):
         elif message == "Listening":
             self._download_timer.stop()
             self._listen_hint = "\u25cf listening…"
-        self.editor.show_partial(self._listen_hint)
+        self._show_live(self._listen_hint)
 
     def _show_download(self) -> None:
         if self.session is None:
@@ -793,7 +910,7 @@ class MainWindow(QMainWindow):
         of = f" of {total} MB" if total else " MB"
         self._listen_hint = (f"\u25cf downloading the speech model — {done}{of}, once only. "
                              "Keep talking: it is being recorded.")
-        self.editor.show_partial(self._listen_hint)
+        self._show_live(self._listen_hint)
 
     def _on_level(self, value: float) -> None:
         self._loudest = max(self._loudest, value)
@@ -836,6 +953,9 @@ class MainWindow(QMainWindow):
             self._preview = session.preview
         self._download_timer.stop()
         self.editor.show_partial("")
+        self.speech.set_live("")
+        self.speech.set_state("Stopped. Press Listen to carry on — the new lines are added "
+                              "below.")
         path = Path(session.audio_path)
         if path.exists() and session.duration > 0:
             rel = path.relative_to(self.work_dir).as_posix()
@@ -1039,6 +1159,7 @@ class MainWindow(QMainWindow):
 
     def _latex(self) -> str:
         return to_latex(self._sync_note(), show_times=self.act_times.isChecked(),
+                        transcript=self.act_transcript.isChecked(),
                         asset_dir=self.work_dir)
 
     def export_tex(self) -> None:
@@ -1204,49 +1325,34 @@ class MainWindow(QMainWindow):
     def _doc(self):
         return self.doc_panel.doc
 
-    def _ai_write(self, message: str, title: str, job) -> None:
-        """Run *job(model, progress)* with the local AI off the GUI thread
-        and write its answer into the note as a section called *title*;
-        *progress(text)* shows how far a long job has got."""
-        if self._ai_busy:
-            self.statusBar().showMessage("The local AI is still writing…", 4000)
-            return
-        preferred = self.settings.value("ai/ollama_model", "")
-        signals = _Signals(self)
-        progress = _Signals(self)
-        progress.done.connect(lambda text: self.statusBar().showMessage(text))
-        self._ai_busy = True
-        self.statusBar().showMessage(message)
-
-        def done(result) -> None:
-            self._ai_busy = False
+    def _ai_write(self, message: str, title: str, job, write=None) -> None:
+        """Run *job(model, progress)* with the local AI and write its
+        answer into the note — as a section called *title*, or through
+        *write(text)*."""
+        def finished(result) -> None:
             status, text = result
             if status != "ok" or not text.strip():
-                self.statusBar().clearMessage()
                 self._ai_problem(text or "The local AI returned nothing.")
                 return
-            insert_section(self.editor, title, markdown_blocks(text))
+            if write is not None:
+                write(text)
+            else:
+                insert_section(self.editor, title, markdown_blocks(text))
             self.statusBar().showMessage("Written into the note — Ctrl+Z undoes it", 6000)
-        signals.done.connect(done)
+        self._run_ai(message, lambda model: job(model, self.ai_bar_step), finished)
 
-        def work():
-            try:
-                model = local_ai.pick_default(local_ai.list_models(), preferred)
-                if not model:
-                    raise local_ai.OllamaError("Ollama has no models yet.")
-                signals.done.emit(("ok", job(model, progress.done.emit)))
-            except local_ai.OllamaError as exc:
-                signals.done.emit(("error", str(exc)))
-            except Exception as exc:  # noqa: BLE001
-                signals.done.emit(("error", f"The local AI failed: {exc}"))
-        threading.Thread(target=work, daemon=True).start()
+    def ai_bar_step(self, text: str) -> None:
+        """For jobs that report progress themselves (from any thread)."""
+        job = local_ai.current_job()
+        if job is not None:
+            job.step(text)
 
     def _doc_summarise_sections(self) -> None:
         doc = self._doc()
         if doc is not None:
             self._ai_write(f"Summarising every section of {doc.name}…",
                            f"Summary by section — {doc.name}",
-                           lambda m, progress: local_ai.summarise_each_section(m, doc, progress))
+                           lambda m, _p: local_ai.summarise_each_section(m, doc))
 
     def _doc_summarise(self) -> None:
         doc = self._doc()
@@ -1289,6 +1395,102 @@ class MainWindow(QMainWindow):
         source = f" ({doc.name}, {hit.where})"
         self.editor.insert_paragraph(quote + source, [[0, len(quote), "i"]])
         self.editor.setFocus()
+
+    # ── times and the speech beside the notes ──────────────────────
+
+    def _time_label(self, t: float) -> str:
+        return self.note.time_label(t, clock=self.act_clock_times.isChecked()
+                                    if hasattr(self, "act_clock_times") else True)
+
+    def _toggle_clock_times(self, on: bool) -> None:
+        self.settings.setValue("view/clock_times", on)
+        self.editor.gutter.update()
+        self.speech.render()
+
+    def _correlate(self) -> None:
+        """Highlight what was said in the minute before the paragraph at
+        the cursor was written."""
+        t = self.editor.current_time()
+        if t is not None and self.note.transcript:
+            self.speech.highlight(t - 60, t + 5)
+
+    def _speech_text(self, segments) -> str:
+        return "\n".join(f"[{self._time_label(g.t)}] {g.text}" for g in segments)
+
+    def _fill_section(self) -> None:
+        first, start, end = self.editor.section_window()
+        self._fill(first, start, end)
+
+    def _fill(self, first, start, end) -> None:
+        segments = self.note.speech_between(start, end)
+        if not segments:
+            self.statusBar().showMessage("Nothing was said while this section was being "
+                                         "written.", 5000)
+            return
+        notes = self._section_text(first)
+        span = f"{self._time_label(segments[0].t)}–{self._time_label(segments[-1].t)}"
+
+        def write(text: str) -> None:
+            if text.strip().lower().startswith("nothing to add"):
+                self.statusBar().showMessage("Your notes already cover what was said.", 6000)
+                return
+            insert_section(self.editor, f"From the speech ({span})", markdown_blocks(text),
+                           level=2, within=first)
+        self._ai_write("Filling in the section from the speech", "",
+                       lambda m, _p: local_ai.fill_from_speech(m, notes, self._speech_text(segments)),
+                       write)
+
+    def _section_text(self, first) -> str:
+        lines, b = [], first
+        while b.isValid():
+            if b != first and block_kind(b) == ("heading", 1):
+                break
+            if b.text().strip():
+                lines.append(b.text().replace("\u2028", " "))
+            b = b.next()
+        return "\n".join(lines)
+
+    def _fill_every_section(self) -> None:
+        windows = [w for w in self.editor.section_windows()
+                   if self.note.speech_between(w[1], w[2])]
+        if not windows:
+            self.statusBar().showMessage("There is no speech to compare with yet.", 5000)
+            return
+        jobs = [(w[0].blockNumber(), self._section_text(w[0]),
+                 self.note.speech_between(w[1], w[2])) for w in windows]
+
+        def run(model, _p):
+            out = []
+            for i, (number, notes, segs) in enumerate(jobs, 1):
+                local_ai.current_job().step(f"Section {i} of {len(jobs)}")
+                out.append((number, segs, local_ai.fill_from_speech(
+                    model, notes, self._speech_text(segs))))
+            return out
+
+        def write(results) -> None:
+            # Last section first, so earlier block numbers stay valid.
+            for number, segs, text in sorted(results, key=lambda r: r[0], reverse=True):
+                if text.strip().lower().startswith("nothing to add"):
+                    continue
+                span = f"{self._time_label(segs[0].t)}–{self._time_label(segs[-1].t)}"
+                insert_section(self.editor, f"From the speech ({span})",
+                               markdown_blocks(text), level=2,
+                               within=self.editor.document().findBlockByNumber(number))
+        self._run_ai("Filling in every section from the speech", lambda m: run(m, None),
+                     lambda res: write(res[1]) if res[0] == "ok"
+                     else self._ai_problem(res[1]))
+
+    def _notes_from_speech(self, selected: str) -> None:
+        text = selected or self._speech_text(self.note.transcript)
+        if not text.strip():
+            self.statusBar().showMessage("Nothing has been said yet.", 5000)
+            return
+
+        def write(notes: str) -> None:
+            insert_section(self.editor, "Notes from the speech", markdown_blocks(notes),
+                           at_end=True)
+        self._ai_write("Making notes from the speech", "",
+                       lambda m, _p: local_ai.notes_from_speech(m, text), write)
 
     # ── undo / help ────────────────────────────────────────────────
 

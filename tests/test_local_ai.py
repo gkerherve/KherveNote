@@ -88,8 +88,32 @@ def test_summarise_each_section_groups_and_reports_progress(monkeypatch):
                         lambda model, system, text, **k: (asked.append(text), "- point")[1])
     steps = []
     out = local_ai.summarise_each_section("m", doc, steps.append)
-    assert out == "## A\n- point\n\n## B\n- point"
-    assert "A.1" in asked[0] and len(asked) == 2
-    assert steps[0].startswith("Summarising section 1 of 3")
+    assert out == "## A\n- point\n\n## B\n- point"          # order kept, "C" too short
+    assert any("A.1" in a for a in asked) and len(asked) == 2
+    assert sorted(steps) == ["Summarised 1 of 2 sections", "Summarised 2 of 2 sections"]
     many = Document("p", "pdf", [DocSection(f"Page {i}", "x " * 50, 1, i) for i in range(1, 61)])
     assert len(local_ai._section_groups(many, 24)) <= 24
+
+
+def test_streaming_reports_text_and_can_be_cancelled(monkeypatch):
+    class Stream:
+        def __init__(self, lines):
+            self.lines = [json.dumps(x).encode() + b"\n" for x in lines]
+
+        def __iter__(self):
+            return iter(self.lines)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    lines = [{"message": {"content": "- one"}}, {"message": {"content": " two"}}, {"done": True}]
+    monkeypatch.setattr(local_ai.urllib.request, "urlopen", lambda req, timeout: Stream(lines))
+    seen = []
+    job = local_ai.Job(on_text=seen.append)
+    assert job.run(local_ai.chat, "m", "sys", "text") == "- one two"
+    assert seen == ["- one", " two"]
+    job.cancelled.set()
+    with pytest.raises(local_ai.Cancelled):
+        job.run(local_ai.chat, "m", "sys", "text")

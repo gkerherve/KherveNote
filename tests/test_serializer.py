@@ -204,3 +204,26 @@ def test_attachment_block_is_named_in_the_export():
     n.add_block("attachment", "Hand_book 1.pdf", path="assets/att-1.pdf")
     assert r"\textbf{Attached document:} Hand\_book 1.pdf" in to_latex(n)
     assert n.attachment_blocks()[0].path == "assets/att-1.pdf"
+
+
+def test_transcript_appendix_only_when_asked():
+    from datetime import datetime
+
+    from khervenote.model import Segment
+    n = Note.new(datetime(2026, 10, 5, 10, 0, 0))
+    n.add_block("typed", "my note")
+    n.transcript = [Segment(62, "the 50% rule"), Segment(70, "  ")]
+    assert "What was said" not in to_latex(n)
+    tex = to_latex(n, transcript=True)
+    assert r"\section{What was said}" in tex
+    assert r"\knotetime{10:01:02}the 50\% rule" in tex
+    assert tex.count(r"\knotetime{") == 1
+
+
+@needs_tectonic
+def test_transcript_appendix_compiles(tmp_path):
+    from khervenote.model import Segment
+    n = _note()
+    n.transcript = [Segment(i * 7.0, f"sentence number {i} about photoemission") for i in range(40)]
+    res = compiler.compile_tex(to_latex(n, transcript=True), tmp_path)
+    assert res.ok, res.log

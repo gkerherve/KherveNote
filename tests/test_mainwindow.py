@@ -39,7 +39,15 @@ def _listening(win):
     return s
 
 
+def test_typing_keeps_listening_by_default(win):
+    s = _listening(win)
+    QTest.keyClick(win.editor, Qt.Key_Space)
+    QTest.keyClick(win.editor, Qt.Key_Return)
+    assert not s.stopped
+
+
 def test_space_stops_listening_and_still_types(win):
+    win.act_stop_on_key.setChecked(True)
     s = _listening(win)
     QTest.keyClicks(win.editor, "a")
     assert not s.stopped
@@ -49,17 +57,10 @@ def test_space_stops_listening_and_still_types(win):
 
 
 def test_return_stops_listening(win):
+    win.act_stop_on_key.setChecked(True)
     s = _listening(win)
     QTest.keyClick(win.editor, Qt.Key_Return)
     assert s.stopped
-
-
-def test_option_keeps_listening_while_typing(win):
-    win.act_stop_on_key.setChecked(False)
-    s = _listening(win)
-    QTest.keyClick(win.editor, Qt.Key_Space)
-    QTest.keyClick(win.editor, Qt.Key_Return)
-    assert not s.stopped
 
 
 def test_ai_note_summary_can_be_undone(win):
@@ -139,3 +140,34 @@ def test_date_picker_sets_the_date(win):
     win.header._pick_date(QDate(2026, 3, 14))
     assert win.header.date.text() == "14 March 2026"
     assert win.header._current_date() == QDate(2026, 3, 14)
+
+
+def test_speech_goes_beside_the_notes_with_clock_times_and_links(win):
+    from datetime import datetime
+    win.note.meta.started = datetime(2026, 10, 5, 14, 0, 0).isoformat()
+    win._on_speech("photons hit the sample", 1864.0)
+    win._on_speech("electrons come out", 1880.0)
+    assert [g.text for g in win.note.transcript] == ["photons hit the sample",
+                                                     "electrons come out"]
+    assert win.editor.toPlainText() == ""                 # not in the page
+    assert "14:31:04" in win.speech.view.toPlainText()
+    win.act_clock_times.setChecked(False)
+    assert win._time_label(1864.0) == "31:04"
+    win.act_clock_times.setChecked(True)
+    assert win._time_label(1864.0) == "14:31:04"
+    # A paragraph written at 14:31:30 highlights the speech of the minute before.
+    win.note.meta.started = datetime(2026, 10, 5, 14, 0, 0).isoformat()
+    from khervenote.editor import BlockMeta
+    QTest.keyClicks(win.editor, "my note")
+    win.editor.document().firstBlock().setUserData(BlockMeta(1890.0))
+    win._correlate()
+    assert win.speech._highlight == (1830.0, 1895.0)
+    saved = win._sync_note()
+    assert len(saved.transcript) == 2
+
+
+def test_speech_into_the_page_option(win):
+    win.act_into_page.setChecked(True)
+    win.settings.setValue("speech/into_page", True)
+    win._on_speech("said in the page", 5.0)
+    assert win.editor.toPlainText() == "said in the page" and not win.note.transcript

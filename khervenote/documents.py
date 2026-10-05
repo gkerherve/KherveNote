@@ -101,7 +101,19 @@ def _read_pdf(path: Path) -> list[DocSection]:
     for i, (lvl, title, page) in enumerate(marks):
         end = cuts[i + 1] if i + 1 < len(cuts) else len(full)
         out.append(DocSection(title, full[cuts[i]:end].strip(), lvl, page))
+    if not _useful(out):
+        # Bookmarks that all carry the paper's title, or mostly cover
+        # nothing, are worse than none: use the pages.
+        return [DocSection(f"Page {i + 1}", t, 1, i + 1) for i, t in enumerate(pages)]
     return out
+
+
+def _useful(sections: list[DocSection]) -> bool:
+    if not sections:
+        return False
+    titles = {s.title.strip().lower() for s in sections}
+    empty = sum(1 for s in sections if len(s.text) < 40)
+    return len(titles) >= 0.6 * len(sections) and empty <= 0.4 * len(sections)
 
 
 def _find_title(flat: str, title: str, lo: int, hi: int) -> int:

@@ -262,7 +262,8 @@ class _Gutter(QWidget):
                 line = tl.lineAt(0)
                 y = tl.position().y() + line.y() - scroll
                 box = QRectF(0, y, self.width() - 22, line.height())
-                stamp = format_time(block_time(block))
+                t = block_time(block)
+                stamp = ed.time_label(t) if t is not None else ""
                 if stamp:
                     p.setPen(theme.color("muted"))
                     p.drawText(box, Qt.AlignRight | Qt.AlignVCenter, stamp)
@@ -294,6 +295,8 @@ class NoteEditor(QTextEdit):
         super().__init__(parent)
         self.clock = clock
         self.work_dir = None
+        #: How a session time is shown in the margin (the window sets it).
+        self.time_label: Callable[[float], str] = format_time
         self._partial: Optional[QTextBlock] = None
         self.setAcceptRichText(False)
         self.setFrameShape(QTextEdit.NoFrame)
@@ -363,7 +366,10 @@ class NoteEditor(QTextEdit):
         end = doc.findBlock(pos + added)
         t = None
         while block.isValid():
-            if not isinstance(block.userData(), BlockMeta):
+            meta = block.userData()
+            # Timed when its first character is typed, not when Return
+            # made the empty line — that is when the thought was written.
+            if block.text().strip() and (not isinstance(meta, BlockMeta) or meta.t is None):
                 if t is None:
                     t = self.clock()
                 block.setUserData(BlockMeta(t))
@@ -591,6 +597,71 @@ class NoteEditor(QTextEdit):
                 out.append((level, block.text().strip(), block.blockNumber()))
             block = block.next()
         return out
+
+    # ── time ───────────────────────────────────────────────────────
+
+    def current_time(self) -> Optional[float]:
+        """When the paragraph at the cursor (or the nearest written one
+        above it) was written."""
+        b = self.textCursor().block()
+        while b.isValid():
+            t = block_time(b)
+            if t is not None and b.text().strip():
+                return t
+            b = b.previous()
+        return None
+
+    def section_windows(self) -> list[tuple[QTextBlock, Optional[float], Optional[float]]]:
+        """(first block, start, end) of every section, by the times its
+        heading and the next one were written; the part before the first
+        heading starts at None (the beginning)."""
+        heads = []
+        b = self.document().begin()
+        while b.isValid():
+            if block_kind(b) == ("heading", 1):
+                heads.append(b)
+            b = b.next()
+        out = []
+        first = self.document().begin()
+        if not heads or heads[0] != first:
+            out.append((first, None, block_time(heads[0]) if heads else None))
+        for i, h in enumerate(heads):
+            end = block_time(heads[i + 1]) if i + 1 < len(heads) else None
+            out.append((h, block_time(h), end))
+        return out
+
+    def section_window(self) -> tuple[QTextBlock, Optional[float], Optional[float]]:
+        """The window of the section the cursor is in."""
+        here = self.textCursor().block().blockNumber()
+        current = None
+        for w in self.section_windows():
+            if w[0].blockNumber() <= here:
+                current = w
+        return current or (self.document().begin(), None, None)
+
+    def go_to_time(self, t: float) -> None:
+        """Show the paragraph written at (or just after) session time *t*,
+        flashing it so it is easy to spot."""
+        best, last = None, None
+        b = self.document().begin()
+        while b.isValid():
+            bt = block_time(b)
+            if bt is not None and b.text().strip():
+                last = b
+                if bt >= t - 2:
+                    best = b
+                    break
+            b = b.next()
+        target = best or last
+        if target is None:
+            return
+        self.go_to_block(target.blockNumber())
+        sel = QTextEdit.ExtraSelection()
+        sel.cursor = QTextCursor(target)
+        sel.cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        sel.format.setBackground(theme.color("key_bg"))
+        self.setExtraSelections([sel])
+        QTimer.singleShot(2500, lambda: self.setExtraSelections([]))
 
     def go_to_block(self, number: int) -> None:
         block = self.document().findBlockByNumber(number)
@@ -1011,23 +1082,30 @@ def load_note(editor: NoteEditor, note: Note) -> None:
     editor.outline_changed.emit()
 
 
-def insert_section(editor: NoteEditor, title: str, blocks: list[Block]) -> None:
-    """A new section *title* holding *blocks*, after the section the
-    cursor is in — one undo step."""
+def insert_section(editor: NoteEditor, title: str, blocks: list[Block], level: int = 1,
+                   within: Optional[QTextBlock] = None, at_end: bool = False) -> None:
+    """A heading *title* followed by *blocks* — one undo step.  It goes
+    after the section the cursor is in, or at the end of the section
+    starting at *within*, or with *at_end* at the end of the note."""
     doc = editor.document()
-    block = editor.textCursor().block()
-    end = block
-    while end.next().isValid() and block_kind(end.next()) != ("heading", 1):
-        end = end.next()
+    if at_end:
+        end = doc.lastBlock()
+    else:
+        end = within if within is not None else editor.textCursor().block()
+        while end.next().isValid() and block_kind(end.next()) != ("heading", 1):
+            end = end.next()
     cur = QTextCursor(end)
     cur.beginEditBlock()
     cur.movePosition(QTextCursor.EndOfBlock)
     blank_doc = doc.blockCount() == 1 and not doc.firstBlock().text().strip()
     t = editor.clock()
-    _write_block(editor, cur, Block(kind="heading", text=title, t=t, level=1), not blank_doc)
+    _write_block(editor, cur, Block(kind="heading", text=title, t=t, level=level),
+                 not blank_doc)
     heading = cur.block().blockNumber()
     for b in blocks:
         b.t = t
+        if b.kind == "heading":
+            b.level = max(b.level, level + 1)
         _write_block(editor, cur, b, True)
     cur.endEditBlock()
     editor.go_to_block(heading)

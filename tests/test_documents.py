@@ -97,3 +97,15 @@ def test_best_passages_pick_the_relevant_part():
     assert any("Shirley" in p.text for p in chosen)
     assert sum(len(p.text) for p in chosen) <= 3000
     assert len(documents.batches(doc, budget=5000)) > 5
+
+
+def test_useless_bookmarks_fall_back_to_pages(tmp_path):
+    import pymupdf
+    d = pymupdf.open()
+    for i in range(4):
+        d.new_page().insert_text((72, 72), f"Paper title\nbody text of page {i + 1} " * 3)
+    d.set_toc([[1, "Paper title", 1], [2, "Paper title", 1], [2, "Paper title", 2],
+               [2, "Paper title", 3], [2, "Paper title", 4]])
+    d.save(tmp_path / "same.pdf")
+    doc = documents.read(tmp_path / "same.pdf")
+    assert [s.title for s in doc.sections] == ["Page 1", "Page 2", "Page 3", "Page 4"]

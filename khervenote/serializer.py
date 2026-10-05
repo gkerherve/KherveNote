@@ -291,15 +291,28 @@ def _section(sec: Section, first: bool, show_times: bool,
     return "\n\n".join(parts + blocks)
 
 
+def _transcript(note: Note) -> str:
+    """The speech transcript as a last section, each stretch with the
+    time it was said in the margin."""
+    rows = [r"\knotetime{" + note.time_label(g.t) + "}" + escape(g.text.strip())
+            for g in note.transcript if g.text.strip()]
+    if not rows:
+        return ""
+    return ("\\section{What was said}\n\\begin{knotetranscript}\n"
+            + "\n\n".join(rows) + "\n\\end{knotetranscript}")
+
+
 def to_latex(note: Note, layout: Optional[str] = None, *,
              show_times: bool = False,
+             transcript: bool = False,
              asset_dir: Optional[Path] = None,
              limit_pt: Optional[float] = None) -> str:
     """The complete ``.tex`` for *note*.
 
-    *asset_dir* lets missing images become a visible placeholder instead
-    of a failed compile; *limit_pt* overrides the continuous-page height
-    cap (tests use it to force the multi-page fallback).
+    *transcript* adds the speech transcript as a last section; *asset_dir*
+    lets missing images become a visible placeholder instead of a failed
+    compile; *limit_pt* overrides the continuous-page height cap (tests
+    use it to force the multi-page fallback).
     """
     layout = layout or note.meta.layout
     chunks = []
@@ -309,5 +322,7 @@ def to_latex(note: Note, layout: Optional[str] = None, *,
             body = _title_band(note) + ("\n\n" + body if body else "")
         if body:
             chunks.append("\\begin{knotechunk}\n" + body + "\n\\end{knotechunk}")
+    if transcript and _transcript(note):
+        chunks.append("\\begin{knotechunk}\n" + _transcript(note) + "\n\\end{knotechunk}")
     return (_preamble(note, layout, limit_pt) + "\\begin{document}\n"
             + "\n\n".join(chunks) + "\n\\end{document}\n")

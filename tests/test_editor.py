@@ -235,3 +235,13 @@ def test_notes_from_0_12_get_their_icons(ed):
     load_note(ed, n)
     back = document_to_note(ed.document(), Note.new())
     assert back.sections[0].blocks[0].kind == "attachment"
+
+
+def test_a_paragraph_is_timed_when_typing_starts_not_on_return(ed):
+    load_note(ed, Note.new())
+    QTest.keyClicks(ed, "first")
+    QTest.keyClick(ed, Qt.Key_Return)          # empty line: no time yet
+    assert ed.document().lastBlock().userData() is None
+    QTest.keyClicks(ed, "second")
+    first, second = (b.t for b in document_to_note(ed.document(), Note.new()).sections[0].blocks)
+    assert second > first

@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 #: Bumped when the JSON layout changes incompatibly.
@@ -110,6 +110,21 @@ class Section:
 
 
 @dataclass
+class Segment:
+    """One stretch of recognised speech in the transcript, which runs
+    beside the user's own notes; *t* is when it was said (session time)."""
+    t: float
+    text: str
+
+    def to_dict(self) -> dict:
+        return {"t": round(self.t, 2), "text": self.text}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Segment":
+        return cls(t=float(d.get("t", 0.0)), text=d.get("text", ""))
+
+
+@dataclass
 class Recording:
     """One Listen-to-Stop run of the microphone, kept in the note."""
     path: str
@@ -169,6 +184,7 @@ class Note:
     summary: str = ""
     sections: list[Section] = field(default_factory=lambda: [Section()])
     recordings: list[Recording] = field(default_factory=list)
+    transcript: list[Segment] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
 
     @classmethod
@@ -187,6 +203,34 @@ class Note:
     def current(self) -> Section:
         """New material goes into the last section."""
         return self.sections[-1]
+
+    def clock(self, t: Optional[float]) -> Optional[datetime]:
+        """The time of day session time *t* corresponds to."""
+        if t is None or not self.meta.started:
+            return None
+        try:
+            return datetime.fromisoformat(self.meta.started) + timedelta(seconds=t)
+        except ValueError:
+            return None
+
+    def time_label(self, t: Optional[float], clock: bool = True, seconds: bool = True) -> str:
+        """How a time is shown: the time of day ("10:42:15") or, with
+        *clock* False or no start time, the time since the start."""
+        when = self.clock(t) if clock else None
+        if when is not None:
+            return when.strftime("%H:%M:%S" if seconds else "%H:%M")
+        if t is None:
+            return ""
+        s = int(t)
+        h, rem = divmod(s, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+    def speech_between(self, start: Optional[float], end: Optional[float]) -> list[Segment]:
+        """Transcript segments said from *start* up to (not including)
+        *end*; None leaves that side open."""
+        return [g for g in self.transcript
+                if (start is None or g.t >= start) and (end is None or g.t < end)]
 
     def elapsed(self, now: Optional[datetime] = None) -> Optional[float]:
         if not self.meta.started:
@@ -273,6 +317,9 @@ class Note:
                     prefix = {"important": "Key point: ", "question": "Question: ",
                               "transcript": "(said) "}.get(b.kind, "")
                     lines.append(prefix + b.text)
+        if self.transcript:
+            lines += ["", "## What was said (transcript)"]
+            lines += [f"[{self.time_label(g.t)}] {g.text}" for g in self.transcript]
         return "\n".join(lines).strip() + "\n"
 
     # ── persistence ────────────────────────────────────────────────
@@ -282,6 +329,7 @@ class Note:
                 "summary": self.summary,
                 "sections": [s.to_dict() for s in self.sections],
                 "recordings": [r.to_dict() for r in self.recordings],
+                "transcript": [g.to_dict() for g in self.transcript],
                 "attachments": [a.to_dict() for a in self.attachments]}
 
     @classmethod
@@ -295,6 +343,7 @@ class Note:
                    sections=[Section.from_dict(s)
                              for s in d.get("sections", [])],
                    recordings=[Recording.from_dict(r) for r in d.get("recordings", [])],
+                   transcript=[Segment.from_dict(g) for g in d.get("transcript", [])],
                    attachments=[Attachment.from_dict(a) for a in d.get("attachments", [])])
 
 

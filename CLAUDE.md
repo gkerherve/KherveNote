@@ -121,6 +121,15 @@ The local AI (`local_ai.py`) talks to Ollama over plain HTTP
 (`OLLAMA_HOST`, default `localhost:11434`) and sends `think: false` so
 reasoning models answer in seconds; it must never need a cloud key.
 
+The speech transcript is `Note.transcript` (segments with their session
+time), shown in the Speech panel (`speech_panel.py`) beside the notes —
+not mixed into them. Notes and speech are linked by time: a paragraph is
+timed when its first character is typed (`BlockMeta`), times show as the
+time of day (`Note.time_label`), and "fill in from the speech" sends the
+AI the segments said during a section. Long AI jobs go through
+`MainWindow._run_ai` with a `local_ai.Job`, so the AI bar can show
+steps, the streamed text and Cancel.
+
 Microphone and camera permission (`permissions.py`): the macOS app
 bundle's Info.plist **must** carry `NSMicrophoneUsageDescription` and
 `NSCameraUsageDescription`, or Qt refuses both at once. Run from
