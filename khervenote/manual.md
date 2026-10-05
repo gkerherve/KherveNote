@@ -185,6 +185,11 @@ on the page, use the **AI** button in the toolbar, or the *AI* menu:
   section (or of the selection) as a key-point box after it.
 - **Summarise the whole note** — writes the summary at the top of the
   note.
+- **Revise with directions…** (Ctrl+Shift+D) — rewrites the selected
+  text, or the whole section you are in, the way you tell it: “shorter,
+  as bullet points”, “in French”, “a heading per topic”, “explain the
+  terms”. A box asks for the directions (your last ones are filled in).
+  Headings and lists in the answer become real headings and lists.
 
 Choose the model under *AI ▸ Local AI model*; a general model such as
 qwen3.5 is picked by default.
@@ -269,6 +274,11 @@ app* and *Remove from the note*.
 
 In the Document panel:
 
+- **Directions for the AI** — an optional box at the top. Whatever you
+  write there is followed by every summary and answer below: “In
+  French”, “At most five bullet points”, “Focus on the methods and the
+  numbers”, “Explain it for a first-year student”… It is remembered
+  until you change it.
 - **Summarise the whole document** — the AI writes a summary section.
   Long documents are summarised part by part, so it takes a little time.
 - **Summarise every section** — one summary per chapter of the
@@ -346,6 +356,7 @@ Text typed after a picture on the same line becomes its caption.
 | Bullets / Numbering | Ctrl+Shift+8 / Ctrl+Shift+7 |
 | Sub-item / back out | Tab / Shift+Tab (in a list) |
 | Rephrase / Summarise with AI | Ctrl+Shift+R / Ctrl+Alt+S |
+| Revise with directions | Ctrl+Shift+D |
 | Take a picture | Ctrl+Shift+P |
 | Insert a PDF / Word / PowerPoint document | Ctrl+Shift+A |
 | Export PDF | Ctrl+E |

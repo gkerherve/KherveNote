@@ -124,3 +124,19 @@ def test_which_models_fit():
     assert ai_setup.fits(6.6, 16) and not ai_setup.fits(14, 16) and ai_setup.fits(14, 64)
     assert ai_setup.fits(99, 0)                  # memory unknown: do not hide anything
     assert len({m[0] for m in ai_setup.RECOMMENDED}) == len(ai_setup.RECOMMENDED)
+
+
+def test_directions_reach_every_document_prompt(monkeypatch):
+    from khervenote.documents import DocSection, Document
+    systems = []
+    monkeypatch.setattr(local_ai, "chat",
+                        lambda model, system, text, **k: (systems.append(system), "- x")[1])
+    doc = Document("d.pdf", "pdf", [DocSection("A", "alpha " * 40, 1),
+                                    DocSection("B", "beta " * 40, 1)])
+    local_ai.summarise_document("m", doc, directions="In French")
+    local_ai.summarise_each_section("m", doc, directions="In French")
+    local_ai.summarise_section("m", "d.pdf", "A", "text", directions="In French")
+    local_ai.answer("m", doc, "why?", directions="In French")
+    local_ai.revise("m", "some text", "Shorter")
+    assert all("In French" in s for s in systems[:-1]) and "Shorter" in systems[-1]
+    assert local_ai.with_directions("SYS", "  ") == "SYS"

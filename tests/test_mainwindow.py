@@ -312,3 +312,37 @@ def test_section_speech_starts_before_its_heading_was_written(win):
     dlg.range_changed.connect(lambda x, y: seen.append((x, y)))
     dlg.set_range(1300, 1300)                             # "Use the lines I selected"
     assert [g.text for g in dlg.segments()] == ["next topic"] and seen
+
+
+def test_revise_with_directions_replaces_the_section_with_structure(win):
+    from khervenote.editor import block_kind
+    win.editor.new_section("Kinetics")
+    QTest.keyClick(win.editor, Qt.Key_Return)
+    QTest.keyClicks(win.editor, "rate depends on concentration and temperature")
+    cur = win.editor.section_range()
+    original = cur.selection().toPlainText()
+    win._ai_done("revise", cur, original,
+                 ("ok", "## Rate law\n- depends on concentration\n- depends on temperature"))
+    doc = win.editor.document()
+    texts = [(block_kind(doc.findBlockByNumber(i))[0], doc.findBlockByNumber(i).text())
+             for i in range(doc.blockCount())]
+    assert texts == [("heading", "Kinetics"), ("heading", "Rate law"),
+                     ("typed", "depends on concentration"), ("typed", "depends on temperature")]
+    assert doc.findBlockByNumber(2).textList() is not None
+    win.editor.undo()
+    assert "rate depends on concentration" in win.editor.toPlainText()
+
+
+def test_revise_keeps_text_that_changed_meanwhile(win):
+    QTest.keyClicks(win.editor, "old words")
+    cur = win.editor.section_range()
+    original = cur.selection().toPlainText()
+    QTest.keyClicks(win.editor, " plus speech")
+    win._ai_done("revise", cur, original, ("ok", "New words."))
+    assert "old words plus speech" in win.editor.toPlainText()
+    assert "New words." in win.editor.toPlainText()
+
+
+def test_directions_are_remembered(win):
+    win.doc_panel.directions.setPlainText("In French, five bullets")
+    assert win.settings.value("ai/directions") == "In French, five bullets"

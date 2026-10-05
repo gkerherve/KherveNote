@@ -265,51 +265,89 @@ DOC_ANSWER = (
     "Reply with the section text only, without a title.")
 
 
+def with_directions(system: str, directions: str) -> str:
+    """*system* plus the user's own directions, which win over its
+    format but never over the facts."""
+    directions = (directions or "").strip()
+    if not directions:
+        return system
+    return (system + "\n\nThe user gives these directions; follow them, even where they "
+            "change the format or language asked for above — but never invent facts "
+            "that are not in the text:\n" + directions)
+
+
+def _ask(model: str, system: str, text: str, directions: str = "", **kw) -> str:
+    """chat() with the user's directions in the instructions and again
+    after the text — small models follow what they read last."""
+    d = (directions or "").strip()
+    if d:
+        text = f"{text}\n\n---\nDirections from the user (follow them exactly): {d}"
+    return chat(model, with_directions(system, d), text, **kw)
+
+
+REVISE = (
+    "Revise the text below following the user's directions. Keep every fact, "
+    "number and name that the directions do not ask you to drop, and do not add "
+    "facts that are not in the text. Use '## ' for headings and '- ' or '1. ' for "
+    "lists when they help. Reply with the revised text only.")
+
+
+def revise(model: str, text: str, directions: str) -> str:
+    _step("Revising")
+    return _ask(model, REVISE, text[:40000], directions, context=16384, limit=2000)
+
+
 def _step(text: str) -> None:
     job = current_job()
     if job is not None:
         job.step(text)
 
 
-def summarise_document(model: str, doc, budget: int = 20000) -> str:
+def summarise_document(model: str, doc, budget: int = 20000, directions: str = "") -> str:
     """Summary of a whole document; a long one is summarised in parts
-    (two at a time) first, then the parts are combined."""
+    (two at a time) first, then the parts are combined.  *directions*
+    guide both steps (what to keep from each part, how to write it)."""
     from .documents import batches
     parts = batches(doc, budget)
     head = f"Document: {doc.name}\n\n"
     if len(parts) == 1:
         _step("Writing the summary")
-        return chat(model, DOC_SUMMARY, head + parts[0], context=16384, limit=900)
+        return _ask(model, DOC_SUMMARY, head + parts[0], directions, context=16384,
+                    limit=1500 if directions else 900)
     _step(f"Reading the document in {len(parts)} parts")
     done = [0]
 
     def part(text: str) -> str:
-        out = chat(model, DOC_PART_SUMMARY, head + text, context=16384, limit=600)
+        out = _ask(model, DOC_PART_SUMMARY, head + text, directions, context=16384,
+                   limit=600)
         done[0] += 1
         _step(f"Read {done[0]} of {len(parts)} parts")
         return out
     notes = _parallel(part, parts)
     _step("Writing the summary")
-    return chat(model, DOC_SUMMARY, head + "\n".join(notes), context=16384, limit=900)
+    return _ask(model, DOC_SUMMARY, head + "\n".join(notes), directions, context=16384,
+                limit=1500 if directions else 900)
 
 
-def summarise_section(model: str, doc_name: str, title: str, text: str) -> str:
+def summarise_section(model: str, doc_name: str, title: str, text: str,
+                      directions: str = "") -> str:
     _step(f"Summarising “{title}”")
-    return chat(model, DOC_SUMMARY,
-                f"Document: {doc_name}\nSection: {title}\n\n{text[:30000]}",
+    return _ask(model, DOC_SUMMARY,
+                f"Document: {doc_name}\nSection: {title}\n\n{text[:30000]}", directions,
                 context=16384, limit=900)
 
 
-def answer(model: str, doc, question: str) -> str:
+def answer(model: str, doc, question: str, directions: str = "") -> str:
     _step("Reading the passages that match the question")
     from .documents import best_passages
     extracts = "\n\n".join(f"[{p.where}]\n{p.text}" for p in best_passages(doc, question))
-    return chat(model, DOC_ANSWER,
+    return _ask(model, DOC_ANSWER,
                 f"Document: {doc.name}\n\nExtracts:\n{extracts}\n\nQuestion: {question}",
-                context=16384)
+                directions, context=16384)
 
 
-def summarise_each_section(model: str, doc, progress=None, max_parts: int = 24) -> str:
+def summarise_each_section(model: str, doc, progress=None, max_parts: int = 24,
+                           directions: str = "") -> str:
     """A "## title" heading and key points for every top-level section,
     two at a time.  A document cut into many small sections (one per
     page, say) is grouped into at most *max_parts* parts first."""
@@ -318,9 +356,9 @@ def summarise_each_section(model: str, doc, progress=None, max_parts: int = 24) 
 
     def one(group) -> str:
         title, text = group
-        points = chat(model, DOC_PART_SUMMARY,
-                      f"Document: {doc.name}\nSection: {title}\n\n{text[:30000]}",
-                      context=16384, limit=500)
+        points = _ask(model, DOC_PART_SUMMARY,
+                      f"Document: {doc.name}\nSection: {title}\n\n{text[:30000]}", directions,
+                      context=16384, limit=800 if directions else 500)
         done[0] += 1
         msg = f"Summarised {done[0]} of {len(groups)} sections"
         _step(msg)

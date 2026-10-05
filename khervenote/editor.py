@@ -732,6 +732,8 @@ class NoteEditor(QTextEdit):
                        lambda: self.ai_requested.emit("summarise"))
         menu.addAction("Summarise the whole note with local AI",
                        lambda: self.ai_requested.emit("summarise_note"))
+        menu.addAction("Revise with directions…" + ("" if sel else " (this section)"),
+                       lambda: self.ai_requested.emit("revise"))
         menu.exec(event.globalPos())
 
     def paragraph_range(self) -> QTextCursor:
@@ -781,6 +783,35 @@ class NoteEditor(QTextEdit):
                 apply_style(block, "typed")
             block = block.next()
         cur.endEditBlock()
+
+    def replace_with_blocks(self, cur: QTextCursor, blocks: list[Block],
+                            keep: bool = False) -> None:
+        """Put *blocks* (headings, lists, paragraphs) where *cur* selects —
+        or, with *keep*, just after it — as one undo step."""
+        doc = self.document()
+        cur.beginEditBlock()
+        if keep:
+            at = QTextCursor(doc)
+            at.setPosition(cur.selectionEnd())
+            at.movePosition(QTextCursor.EndOfBlock)
+            new = True
+        else:
+            start = cur.selectionStart()
+            cur.removeSelectedText()
+            at = QTextCursor(doc)
+            at.setPosition(start)
+            set_list(at.block(), None)
+            # Write into the emptied paragraph if nothing is left in it.
+            new = bool(at.block().text().strip())
+            if new:
+                at.movePosition(QTextCursor.EndOfBlock)
+        t = self.clock()
+        for b in blocks:
+            b.t = t
+            _write_block(self, at, b, new)
+            new = True
+        cur.endEditBlock()
+        self.setTextCursor(at)
 
     def insert_summary_after(self, cur: QTextCursor, text: str) -> None:
         """A key-point paragraph holding *text*, after the range *cur*."""

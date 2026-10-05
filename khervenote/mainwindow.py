@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QAction, QActionGroup, QDesktopServices, QImage, QKeySequence, QTextCursor,
 )
 from PySide6.QtWidgets import (
-    QApplication, QCalendarWidget, QComboBox, QDockWidget, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QCalendarWidget, QComboBox, QDockWidget, QInputDialog, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox,
     QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
@@ -280,6 +280,9 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.doc_panel.open_file.connect(
             lambda: self._doc_att and self._open_attachment_file(self._doc_att))
+        self.doc_panel.directions.setPlainText(self.settings.value("ai/directions", ""))
+        self.doc_panel.directions.textChanged.connect(lambda: self.settings.setValue(
+            "ai/directions", self.doc_panel.directions_text()))
         self.doc_panel.summarise.connect(self._doc_summarise)
         self.doc_panel.summarise_section.connect(self._doc_summarise_section)
         self.doc_panel.insert_section.connect(self._doc_insert_section)
@@ -517,7 +520,8 @@ class MainWindow(QMainWindow):
         ai_button.setText("AI")
         ai_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         ai_menu = QMenu(ai_button)
-        for a in (self.act_rephrase, self.act_summarise, self.act_summarise_note):
+        for a in (self.act_rephrase, self.act_revise, self.act_summarise,
+                  self.act_summarise_note):
             ai_menu.addAction(a)
         ai_button.setMenu(ai_menu)
         tb.insertWidget(self.act_pdf, ai_button)
@@ -571,10 +575,14 @@ class MainWindow(QMainWindow):
         self.act_summarise = self._action("&Summarise section / selection",
                                           lambda: self.run_ai("summarise"), "Ctrl+Alt+S",
                                           "Key points of this section, by the local AI (Ollama)")
+        self.act_revise = self._action("Re&vise with directions…", lambda: self.run_ai("revise"),
+                                       "Ctrl+Shift+D",
+                                       "Rewrite the selection (or this section) the way you say")
         self.act_summarise_note = self._action("Summarise the whole &note",
                                                lambda: self.run_ai("summarise_note"), None,
                                                "Write the summary at the top of the note")
-        for a in (self.act_rephrase, self.act_summarise, self.act_summarise_note):
+        for a in (self.act_rephrase, self.act_revise, self.act_summarise,
+                  self.act_summarise_note):
             menu.addAction(a)
         menu.addSeparator()
         menu.addAction(self._action("&Fill in this section from the speech", self._fill_section,
@@ -624,7 +632,7 @@ class MainWindow(QMainWindow):
         ed = self.editor
         if action == "rephrase":
             cur = ed.paragraph_range()
-        elif action == "summarise":
+        elif action in ("summarise", "revise"):
             cur = ed.section_range()
         else:
             cur = None
@@ -635,10 +643,23 @@ class MainWindow(QMainWindow):
         text = original if cur is not None else self._sync_note().plain_text()
         if action == "summarise" and not ed.textCursor().hasSelection() and ed.section_title():
             text = f"Section: {ed.section_title()}\n\n{text}"
-        job = {"rephrase": local_ai.rephrase, "summarise": local_ai.summarise,
-               "summarise_note": local_ai.summarise_note}[action]
+        if action == "revise":
+            directions, ok = QInputDialog.getMultiLineText(
+                self, "Revise with directions",
+                "How should the AI revise it? For example: “Shorter, as bullet points”, "
+                "“In French”, “Add a heading per topic”, “Explain the terms”.",
+                self.settings.value("ai/revise_directions", "")
+                or self.doc_panel.directions_text())
+            if not ok or not directions.strip():
+                return
+            self.settings.setValue("ai/revise_directions", directions.strip())
+            job = lambda model, txt: local_ai.revise(model, txt, directions)  # noqa: E731
+        else:
+            job = {"rephrase": local_ai.rephrase, "summarise": local_ai.summarise,
+                   "summarise_note": local_ai.summarise_note}[action]
         title = {"rephrase": "Rephrasing", "summarise": "Summarising the section",
-                 "summarise_note": "Summarising the whole note"}[action]
+                 "summarise_note": "Summarising the whole note",
+                 "revise": "Revising with your directions"}[action]
         self._run_ai(title, lambda model: job(model, text),
                      lambda res: self._ai_done(action, cur, original, res))
 
@@ -710,6 +731,10 @@ class MainWindow(QMainWindow):
             cur_s.select(QTextCursor.Document)
             cur_s.insertText(text.strip())
             summary.setFocus()
+        elif action == "revise":
+            # Changed meanwhile (more speech, an edit): add, do not overwrite.
+            self.editor.replace_with_blocks(cur, markdown_blocks(text, top_level=2),
+                                            keep=cur.selection().toPlainText() != original)
         elif cur.selection().toPlainText() != original:
             # The text changed while the AI was writing (more speech, an
             # edit): put the result next to it rather than overwrite.
@@ -1427,33 +1452,38 @@ class MainWindow(QMainWindow):
 
     def _doc_summarise_sections(self) -> None:
         doc = self._doc()
+        d = self.doc_panel.directions_text()
         if doc is not None:
             self._ai_write(f"Summarising every section of {doc.name}…",
                            f"Summary by section — {doc.name}",
-                           lambda m, _p: local_ai.summarise_each_section(m, doc))
+                           lambda m, _p: local_ai.summarise_each_section(m, doc, directions=d))
 
     def _doc_summarise(self) -> None:
         doc = self._doc()
+        d = self.doc_panel.directions_text()
         if doc is not None:
             self._ai_write(f"Summarising {doc.name}… (a long document takes a while)",
                            f"Summary — {doc.name}",
-                           lambda m, _p: local_ai.summarise_document(m, doc))
+                           lambda m, _p: local_ai.summarise_document(m, doc, directions=d))
 
     def _doc_summarise_section(self, i: int) -> None:
         doc = self._doc()
+        d = self.doc_panel.directions_text()
         if doc is None:
             return
         sec = doc.sections[i]
         name = sec.title or doc.name
         self._ai_write(f"Summarising “{name}”…", f"{name} — summary",
-                       lambda m, _p: local_ai.summarise_section(m, doc.name, name, sec.text))
+                       lambda m, _p: local_ai.summarise_section(m, doc.name, name, sec.text,
+                                                                directions=d))
 
     def _doc_ask(self, question: str) -> None:
         doc = self._doc()
+        d = self.doc_panel.directions_text()
         if doc is not None:
             title = question if len(question) <= 90 else question[:87] + "…"
             self._ai_write(f"Reading {doc.name} to answer…", title,
-                           lambda m, _p: local_ai.answer(m, doc, question))
+                           lambda m, _p: local_ai.answer(m, doc, question, directions=d))
             self.doc_panel.question.clear()
 
     def _doc_insert_section(self, i: int) -> None:

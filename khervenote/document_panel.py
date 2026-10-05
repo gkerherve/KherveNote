@@ -10,8 +10,8 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton,
-    QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPlainTextEdit,
+    QPushButton, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import icons, theme
@@ -80,6 +80,12 @@ class DocumentPanel(QWidget):
         qrow = QHBoxLayout()
         qrow.addWidget(self.question, 1)
         qrow.addWidget(ask)
+        self.directions = QPlainTextEdit()
+        self.directions.setPlaceholderText(
+            "Directions for the AI (optional) — e.g. “In French”, “Five bullet points”, "
+            "“Focus on the methods and the numbers”, “Explain it for a first-year student”")
+        self.directions.setToolTip("Followed by every summary and answer below")
+        self.directions.setFixedHeight(64)
         self.summary_btn = QPushButton(icons.sparkle(), "Summarise the whole document")
         self.summary_btn.clicked.connect(self.summarise)
         self.sections_btn = QPushButton(icons.sparkle(), "Summarise every section")
@@ -119,6 +125,8 @@ class DocumentPanel(QWidget):
         col = QVBoxLayout(self)
         col.setContentsMargins(8, 8, 8, 8)
         col.addLayout(top)
+        col.addWidget(_caption("Directions for the AI"))
+        col.addWidget(self.directions)
         col.addWidget(self.summary_btn)
         col.addWidget(self.sections_btn)
         col.addLayout(qrow)
@@ -135,6 +143,9 @@ class DocumentPanel(QWidget):
         for w in (self.summary_btn, self.sections_btn, self.question, self.sections, self.find,
                   self.results):
             w.setEnabled(on)
+
+    def directions_text(self) -> str:
+        return self.directions.toPlainText().strip()
 
     def set_loading(self, name: str) -> None:
         self.doc = None
