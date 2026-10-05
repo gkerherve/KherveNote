@@ -36,6 +36,7 @@ from .audio import input_devices
 from .ai_status import AIStatusBar
 from .document_panel import DocumentPanel, DropHint
 from .speech_panel import SpeechPanel
+from .speech_range import SpeechRangeDialog
 from .model import Attachment, Recording, Segment, markdown_blocks
 from .permissions import with_permission
 from .serializer import CONTINUOUS_LIMIT_MM, format_time, to_latex
@@ -532,6 +533,15 @@ class MainWindow(QMainWindow):
         menu.addAction(self.act_listen)
         menu.addAction(self.act_stop_on_key)
         menu.addAction(self.act_into_page)
+        lead = menu.addMenu("The speech comes &before my notes by…")
+        group = QActionGroup(self)
+        for secs, label in ((0, "No time — I write as I hear"), (30, "30 seconds"),
+                            (60, "1 minute"), (120, "2 minutes"), (300, "5 minutes")):
+            a = lead.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(secs == int(self._lead()))
+            a.triggered.connect(lambda _=False, v=secs: self.settings.setValue("speech/lead", v))
+            group.addAction(a)
         menu.addSeparator()
         models = menu.addMenu("&Model")
         group = QActionGroup(self)
@@ -1475,25 +1485,49 @@ class MainWindow(QMainWindow):
         self.editor.gutter.update()
         self.speech.render()
 
+    def _lead(self) -> float:
+        """How long before writing something the speech about it usually
+        came (Speech ▸ The speech comes before my notes by…)."""
+        return float(self.settings.value("speech/lead", 120, type=int))
+
+    def _speech_window(self, start: Optional[float], end: Optional[float]):
+        """A section's speech: from *lead* before its heading was written to
+        *lead* before the next one (or to the end)."""
+        lead = self._lead()
+        return (None if start is None else start - lead,
+                None if end is None else end - lead)
+
     def _correlate(self) -> None:
-        """Highlight what was said in the minute before the paragraph at
-        the cursor was written."""
+        """Highlight what was said before the paragraph at the cursor was
+        written — as far back as the lead time, a minute at least."""
         t = self.editor.current_time()
         if t is not None and self.note.transcript:
-            self.speech.highlight(t - 60, t + 5)
+            self.speech.highlight(t - max(60.0, self._lead()), t + 5)
 
     def _speech_text(self, segments) -> str:
         return "\n".join(f"[{self._time_label(g.t)}] {g.text}" for g in segments)
 
     def _fill_section(self) -> None:
+        """Ask which speech goes with the section at the cursor — starting
+        a little before its heading was written — then let the AI add
+        what the notes miss."""
+        if not self.note.transcript:
+            self.statusBar().showMessage("Nothing has been said yet.", 5000)
+            return
         first, start, end = self.editor.section_window()
-        self._fill(first, start, end)
+        a, b = self._speech_window(start, end)
+        speech = self.note.transcript
+        a = speech[0].t if a is None else max(a, 0.0)
+        b = speech[-1].t if b is None else b
+        title = first.text().strip() if block_kind(first) == ("heading", 1) else ""
+        dlg = SpeechRangeDialog(self.note, title, a, b, self.speech.selected_range(), self)
+        dlg.range_changed.connect(self.speech.highlight)
+        dlg.range_changed.emit(*dlg.span)
+        if dlg.exec():
+            self._fill_with(first, dlg.segments())
 
-    def _fill(self, first, start, end) -> None:
-        segments = self.note.speech_between(start, end)
+    def _fill_with(self, first, segments) -> None:
         if not segments:
-            self.statusBar().showMessage("Nothing was said while this section was being "
-                                         "written.", 5000)
             return
         notes = self._section_text(first)
         span = f"{self._time_label(segments[0].t)}–{self._time_label(segments[-1].t)}"
@@ -1519,8 +1553,9 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _fill_every_section(self) -> None:
-        windows = [w for w in self.editor.section_windows()
-                   if self.note.speech_between(w[1], w[2])]
+        windows = [(w[0], *self._speech_window(w[1], w[2]))
+                   for w in self.editor.section_windows()]
+        windows = [w for w in windows if self.note.speech_between(w[1], w[2])]
         if not windows:
             self.statusBar().showMessage("There is no speech to compare with yet.", 5000)
             return

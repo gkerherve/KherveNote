@@ -155,13 +155,14 @@ def test_speech_goes_beside_the_notes_with_clock_times_and_links(win):
     assert win._time_label(1864.0) == "31:04"
     win.act_clock_times.setChecked(True)
     assert win._time_label(1864.0) == "14:31:04"
-    # A paragraph written at 14:31:30 highlights the speech of the minute before.
+    # A paragraph written at 14:31:30 highlights the speech of the two
+    # minutes before (the default lead time).
     win.note.meta.started = datetime(2026, 10, 5, 14, 0, 0).isoformat()
     from khervenote.editor import BlockMeta
     QTest.keyClicks(win.editor, "my note")
     win.editor.document().firstBlock().setUserData(BlockMeta(1890.0))
     win._correlate()
-    assert win.speech._highlight == (1830.0, 1895.0)
+    assert win.speech._highlight == (1770.0, 1895.0)
     saved = win._sync_note()
     assert len(saved.transcript) == 2
 
@@ -278,3 +279,36 @@ def test_an_ai_answer_never_lands_in_another_note(win, monkeypatch, app):
         app.processEvents()
         time.sleep(0.01)
     assert written == [] and win.editor.toPlainText() == ""
+
+
+def test_section_speech_starts_before_its_heading_was_written(win):
+    from datetime import datetime
+
+    from khervenote.editor import BlockMeta
+    from khervenote.model import Segment
+    from khervenote.speech_range import SpeechRangeDialog
+    win.note.meta.started = datetime(2026, 10, 5, 14, 0, 0).isoformat()
+    # Said at 14:10 and 14:14; the heading only written at 14:12, the next at 14:20.
+    win.note.transcript = [Segment(600, "early point"), Segment(840, "later point"),
+                           Segment(1300, "next topic")]
+    win.editor.new_section("Kinetics")
+    win.editor.document().lastBlock().setUserData(BlockMeta(720))
+    win.editor.new_section("Next")
+    win.editor.document().lastBlock().setUserData(BlockMeta(1200))
+    windows = win.editor.section_windows()
+    kinetics = next(w for w in windows if w[0].text() == "Kinetics")
+    a, b = win._speech_window(kinetics[1], kinetics[2])
+    assert (a, b) == (600, 1080)                          # 2 min earlier, both ends
+    assert [g.text for g in win.note.speech_between(a, b)] == ["early point", "later point"]
+    win.settings.setValue("speech/lead", 0)
+    a0, b0 = win._speech_window(kinetics[1], kinetics[2])
+    assert [g.text for g in win.note.speech_between(a0, b0)] == ["later point"]
+
+    dlg = SpeechRangeDialog(win.note, "Kinetics", a, b, selected=(1300, 1300))
+    assert dlg.start.time().toString("HH:mm:ss") == "14:10:00"
+    assert dlg.end.time().toString("HH:mm:ss") == "14:18:00"
+    assert [g.text for g in dlg.segments()] == ["early point", "later point"]
+    seen = []
+    dlg.range_changed.connect(lambda x, y: seen.append((x, y)))
+    dlg.set_range(1300, 1300)                             # "Use the lines I selected"
+    assert [g.text for g in dlg.segments()] == ["next topic"] and seen

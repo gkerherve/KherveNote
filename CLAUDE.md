@@ -134,7 +134,10 @@ time), shown in the Speech panel (`speech_panel.py`) beside the notes —
 not mixed into them. Notes and speech are linked by time: a paragraph is
 timed when its first character is typed (`BlockMeta`), times show as the
 time of day (`Note.time_label`), and "fill in from the speech" sends the
-AI the segments said during a section. Long AI jobs go through
+AI the segments said during a section — shifted earlier by the lead
+time (`speech/lead`, 2 min by default: people write after they hear),
+and confirmed by the user in `SpeechRangeDialog` (From/To clock times,
+live highlight, "use my selection"). Long AI jobs go through
 `MainWindow._run_ai` with a `local_ai.Job`, so the AI bar can show
 steps, the streamed text and Cancel.
 

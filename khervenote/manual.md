@@ -116,8 +116,9 @@ the right, or **Ctrl+L**).
 
 **The two are linked by time:**
 
-- Click in a paragraph of your notes: the speech said **in the minute
-  before** you wrote it is highlighted in the Speech panel.
+- Click in a paragraph of your notes: the speech said **before** you wrote
+  it is highlighted in the Speech panel — as far back as the lead time
+  below (two minutes unless you change it).
 - Click a **time** in the Speech panel: the page jumps to what you were
   writing then (it flashes briefly).
 - Right-click a line (or a selection) of speech: *Insert into my notes*,
@@ -125,12 +126,23 @@ the right, or **Ctrl+L**).
 
 **…and by the AI** (buttons under the Speech panel, or the *AI* menu):
 
-- **Fill in my section** — the AI reads what was said while the section
-  you are in was being written, compares it with your notes, and adds
-  the points you missed under a **From the speech (14:31:04–14:38:12)**
-  heading at the end of that section.
+- **Fill in my section** — first a small window asks **which speech goes
+  with the section**: *From* and *To* times, already filled in, with the
+  matching lines listed and highlighted in the Speech panel as you change
+  them. *Use the lines I selected* takes exactly the lines you selected
+  in the Speech panel; *All the speech* takes everything. Then the AI
+  compares that speech with your notes and adds the points you missed
+  under a **From the speech (14:31:04–14:38:12)** heading at the end of
+  the section.
 - **Fill in every section from the speech** (*AI* menu) — the same for
-  each section in turn.
+  each section in turn, with the suggested times.
+
+**The speech comes before the notes.** People usually write a section
+heading *after* hearing what it is about — often a minute or two later.
+So the speech of a section is taken from a little **before** its heading
+was written until the same lead before the next heading (or the end).
+*Speech ▸ The speech comes before my notes by…* sets that lead: none,
+30 seconds, 1, **2 (the default)** or 5 minutes.
 - **Make notes from the speech** — turns what was said (the selected
   lines, or all of it) into structured notes with headings, added at the
   end of the note.

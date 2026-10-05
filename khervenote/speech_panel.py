@@ -147,6 +147,31 @@ class SpeechPanel(QWidget):
         self.view.setHtml(body)
         bar.setValue(bar.maximum() if follow else keep)
 
+    def selected_range(self) -> Optional[tuple[float, float]]:
+        """(first, last) time of the speech lines the selection touches."""
+        cur = self.view.textCursor()
+        if not cur.hasSelection():
+            return None
+        doc = self.view.document()
+        times = []
+        block = doc.findBlock(cur.selectionStart())
+        last = doc.findBlock(cur.selectionEnd())
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                fmt = it.fragment().charFormat()
+                seg = self._segment(fmt.anchorHref()) if fmt.isAnchor() else None
+                if seg is not None:
+                    times.append(seg.t)
+                it += 1
+            if block == last:
+                break
+            block = block.next()
+        if not times:
+            seg = self._segment_at(self.view.cursorRect(cur).center())
+            times = [seg.t] if seg else []
+        return (min(times), max(times)) if times else None
+
     def selected_text(self) -> str:
         return self.view.textCursor().selectedText().replace(" ", "\n").strip()
 
