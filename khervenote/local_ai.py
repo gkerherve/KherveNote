@@ -42,6 +42,39 @@ def _request(path: str, payload: Optional[dict] = None, timeout: float = 5.0) ->
                           f"({base_url()}). Start it with `ollama serve`.") from exc
 
 
+def is_running() -> bool:
+    try:
+        _request("/api/version", timeout=2)
+        return True
+    except OllamaError:
+        return False
+
+
+def pull(model: str, progress=None) -> None:
+    """Download *model* into Ollama, reporting ``progress(fraction, text)``
+    as it goes (fraction is None while there is no size yet)."""
+    req = urllib.request.Request(base_url() + "/api/pull",
+                                 data=json.dumps({"model": model, "stream": True}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3600) as resp:
+            for line in resp:
+                if not line.strip():
+                    continue
+                msg = json.loads(line)
+                if "error" in msg:
+                    raise OllamaError(msg["error"])
+                total, done = msg.get("total"), msg.get("completed")
+                if progress:
+                    frac = done / total if total and done is not None else None
+                    progress(frac, msg.get("status", ""))
+    except urllib.error.HTTPError as exc:
+        raise OllamaError(f"Ollama answered {exc.code}: {exc.read()[:300]!r}") from exc
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        raise OllamaError("Ollama is not running on this computer "
+                          f"({base_url()}). Start it, then try again.") from exc
+
+
 def list_models() -> list[str]:
     return sorted(m["name"] for m in _request("/api/tags", timeout=3).get("models", []))
 
@@ -163,3 +196,41 @@ def answer(model: str, doc, question: str) -> str:
     return chat(model, DOC_ANSWER,
                 f"Document: {doc.name}\n\nExtracts:\n{extracts}\n\nQuestion: {question}",
                 context=16384)
+
+
+def summarise_each_section(model: str, doc, progress=None, max_parts: int = 24) -> str:
+    """A "## title" heading and key points for every top-level section,
+    one model call each.  A document cut into many small sections (one
+    per page, say) is grouped into at most *max_parts* parts first."""
+    groups = _section_groups(doc, max_parts)
+    out = []
+    for i, (title, text) in enumerate(groups, 1):
+        if progress:
+            progress(f"Summarising section {i} of {len(groups)}: {title}…")
+        if len(text.strip()) < 80:
+            continue
+        points = chat(model, DOC_PART_SUMMARY,
+                      f"Document: {doc.name}\nSection: {title}\n\n{text[:30000]}",
+                      context=16384)
+        out.append(f"## {title}\n{points.strip()}")
+    return "\n\n".join(out)
+
+
+def _section_groups(doc, max_parts: int) -> list[tuple[str, str]]:
+    # Sub-sections are folded into the top-level section they belong to.
+    top = min((s.level for s in doc.sections), default=1)
+    groups: list[list] = []
+    for s in doc.sections:
+        if s.level == top or not groups:
+            groups.append([s.title or doc.name, s.text])
+        else:
+            groups[-1][1] += f"\n\n{s.title}\n{s.text}"
+    if len(groups) > max_parts:
+        size = -(-len(groups) // max_parts)
+        merged = []
+        for i in range(0, len(groups), size):
+            chunk = groups[i:i + size]
+            title = chunk[0][0] if len(chunk) == 1 else f"{chunk[0][0]} – {chunk[-1][0]}"
+            merged.append([title, "\n\n".join(t for _, t in chunk)])
+        groups = merged
+    return [(t, x) for t, x in groups]

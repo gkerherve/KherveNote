@@ -240,6 +240,8 @@ def _block(block: Block, show_times: bool, asset_dir: Optional[Path]) -> str:
         show_times or block.kind == "transcript") else ""
     if block.kind == "image":
         return _image(block, asset_dir) if block.path else ""
+    if block.kind == "attachment":
+        return r"{\color{knotemuted}\textbf{Attached document:} " + escape(block.text) + "}"
     if block.kind == "heading":
         title = escape(block.text.strip())
         if not title:

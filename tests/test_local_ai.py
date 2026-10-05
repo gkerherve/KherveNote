@@ -77,3 +77,19 @@ def test_pick_default():
     assert local_ai.pick_default(installed) == "qwen3.5:4b"
     assert local_ai.pick_default(["xps-expert:latest"]) == "xps-expert:latest"
     assert local_ai.pick_default([], "x") == ""
+
+
+def test_summarise_each_section_groups_and_reports_progress(monkeypatch):
+    from khervenote.documents import DocSection, Document
+    doc = Document("m.pdf", "pdf", [DocSection("A", "alpha " * 30, 1), DocSection("A.1", "sub " * 30, 2),
+                                    DocSection("B", "beta " * 30, 1), DocSection("C", "tiny", 1)])
+    asked = []
+    monkeypatch.setattr(local_ai, "chat",
+                        lambda model, system, text, **k: (asked.append(text), "- point")[1])
+    steps = []
+    out = local_ai.summarise_each_section("m", doc, steps.append)
+    assert out == "## A\n- point\n\n## B\n- point"
+    assert "A.1" in asked[0] and len(asked) == 2
+    assert steps[0].startswith("Summarising section 1 of 3")
+    many = Document("p", "pdf", [DocSection(f"Page {i}", "x " * 50, 1, i) for i in range(1, 61)])
+    assert len(local_ai._section_groups(many, 24)) <= 24

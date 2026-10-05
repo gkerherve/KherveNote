@@ -106,7 +106,12 @@ stack. Consequences that must hold for anything added to the template:
 | Links | Open in KherveTeX, KherveRef citations | later |
 | Release | Installers with tectonic, warmed cache and a Whisper model | later |
 
-Attached documents (`documents.py`, Qt-free) are read into sections that
+Attached documents sit **in the page** as an inline icon (an image whose
+resource name is `knote-attachment:<path>|<name>`, drawn by
+`editor.chip_image`) and are `attachment` blocks in the model; deleting
+the icon removes the document (Undo restores it), and `Note.attachments`
+is derived from those blocks on save. They are read (`documents.py`,
+Qt-free) into sections that
 never share text (a PDF's bookmarks are cut where their title is
 printed). Questions send only the best-matching passages (BM25, ~9000
 characters) and long summaries go part by part, so a small local model

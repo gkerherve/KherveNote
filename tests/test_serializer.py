@@ -197,3 +197,10 @@ def test_rich_marks():
     n = Note.new()
     n.add_block("typed", "- not a list", marks=[[2, 3, "u"]])
     assert r"\underline{not}" in to_latex(n) and "itemize" not in to_latex(n)
+
+
+def test_attachment_block_is_named_in_the_export():
+    n = Note.new()
+    n.add_block("attachment", "Hand_book 1.pdf", path="assets/att-1.pdf")
+    assert r"\textbf{Attached document:} Hand\_book 1.pdf" in to_latex(n)
+    assert n.attachment_blocks()[0].path == "assets/att-1.pdf"

@@ -31,7 +31,7 @@ from .knote_file import EXTENSION, load_knote, save_knote
 from .library_panel import LibraryPanel
 from .model import Note
 from .audio import input_devices
-from .document_panel import AttachmentStrip, DocumentPanel
+from .document_panel import DocumentPanel, DropHint
 from .model import Attachment, Recording, markdown_blocks
 from .permissions import with_permission
 from .serializer import CONTINUOUS_LIMIT_MM, format_time, to_latex
@@ -104,11 +104,11 @@ class NoteHeader(QFrame):
             w.setFrame(False)
             w.textEdited.connect(self.changed)
         self.summary.textChanged.connect(self.changed)
-        self.attachments = AttachmentStrip()
+        self.drop_hint = DropHint()
         self._col = col
         col.addWidget(self.title)
         col.addLayout(row)
-        col.addWidget(self.attachments)
+        col.addWidget(self.drop_hint)
         col.addWidget(self.summary)
 
     def _current_date(self) -> QDate:
@@ -145,6 +145,7 @@ class NoteHeader(QFrame):
         for w in (self.speaker, self.date, self.place):
             w.setStyleSheet(f"color:{muted};")
         self.date_button.setIcon(icons.calendar())
+        self.drop_hint.apply_theme()
 
     def load(self, note: Note) -> None:
         m = note.meta
@@ -240,9 +241,11 @@ class MainWindow(QMainWindow):
         self.doc_dock.hide()
         self._docs: dict[str, object] = {}
         self._doc_att: Optional[Attachment] = None
-        self.header.attachments.opened.connect(self.show_document)
-        self.header.attachments.removed.connect(self._remove_attachment)
-        self.header.attachments.show_file.connect(self._open_attachment_file)
+        self.header.drop_hint.clicked.connect(self.attach_dialog)
+        self.editor.attachment_action.connect(self._attachment_action)
+        self.editor.outline_changed.connect(self._update_drop_hint)
+        self.doc_panel.summarise_all.connect(self._doc_summarise_sections)
+        self.setAcceptDrops(True)
         self.doc_panel.open_file.connect(
             lambda: self._doc_att and self._open_attachment_file(self._doc_att))
         self.doc_panel.summarise.connect(self._doc_summarise)
@@ -340,9 +343,9 @@ class MainWindow(QMainWindow):
                               "Mark the paragraph as a question (Ctrl+Shift+Q)")
         self.act_image = A("Image", self.insert_image, None,
                            "Insert a picture; paste (Ctrl+V) works for screenshots")
-        self.act_attach = A("Attach document…", self.attach_dialog, "Ctrl+Shift+A",
-                            "Attach a PDF, Word, PowerPoint or text document to this note — "
-                            "or drop it on the page (Ctrl+Shift+A)")
+        self.act_attach = A("Insert PDF", self.attach_dialog, "Ctrl+Shift+A",
+                            "Insert a PDF, Word, PowerPoint or text document into the note — "
+                            "or drag the file onto the page (Ctrl+Shift+A)")
         self.act_camera = A("Take a picture", self.take_photo, "Ctrl+Shift+P",
                             "Take a picture with the camera — a whiteboard, a slide (Ctrl+Shift+P)")
         self.act_pdf = A("Export PDF", self.export_pdf, "Ctrl+E",
@@ -419,6 +422,12 @@ class MainWindow(QMainWindow):
                   self.act_attach, None,
                   self.act_summary, self.act_clock):
             m.addSeparator() if a is None else m.addAction(a)
+        m = mb.addMenu("&Insert")
+        m.addAction(A("&PDF, Word or PowerPoint document…", self.attach_dialog))
+        m.addAction(A("&Image…", self.insert_image))
+        m.addAction(A("Picture from the &camera…", self.take_photo))
+        m.addSeparator()
+        m.addAction(A("New &section", lambda: self.editor.new_section()))
         self._build_speech_menu(mb.addMenu("&Speech"))
         self._build_ai_menu(mb.addMenu("&AI"))
         m = mb.addMenu("&Export")
@@ -461,7 +470,7 @@ class MainWindow(QMainWindow):
         tb.insertSeparator(self.act_pdf)
         self._ai_button = ai_button
         # The things people look for first get their name next to the icon.
-        for a in (self.act_listen, self.act_section):
+        for a in (self.act_listen, self.act_section, self.act_attach):
             tb.widgetForAction(a).setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
         self.toolbar = tb
@@ -505,6 +514,8 @@ class MainWindow(QMainWindow):
             menu.addAction(a)
         menu.addSeparator()
         self._ai_model_menu = menu.addMenu("Local AI &model (Ollama)")
+        menu.addAction(self._action("Set &up the local AI… (install Ollama, choose a model)",
+                                    self.show_ai_setup))
         self._ai_model_menu.aboutToShow.connect(self._fill_ai_models)
 
     def _fill_ai_models(self) -> None:
@@ -515,10 +526,10 @@ class MainWindow(QMainWindow):
         except local_ai.OllamaError as exc:
             a = menu.addAction(str(exc))
             a.setEnabled(False)
+            menu.addAction("Set up the local AI…", self.show_ai_setup)
             return
         if not models:
-            a = menu.addAction("No models — run `ollama pull qwen3.5:4b` (or another)")
-            a.setEnabled(False)
+            menu.addAction("No models yet — install one…", self.show_ai_setup)
             return
         current = local_ai.pick_default(models, self.settings.value("ai/ollama_model", ""))
         group = QActionGroup(menu)
@@ -564,8 +575,7 @@ class MainWindow(QMainWindow):
             try:
                 model = local_ai.pick_default(local_ai.list_models(), preferred)
                 if not model:
-                    raise local_ai.OllamaError("Ollama has no models yet — "
-                                               "run `ollama pull qwen3.5:4b` (or another).")
+                    raise local_ai.OllamaError("Ollama has no models yet.")
                 signals.done.emit(("ok", job(model, text)))
             except local_ai.OllamaError as exc:
                 signals.done.emit(("error", str(exc)))
@@ -578,7 +588,7 @@ class MainWindow(QMainWindow):
         status, text = result
         if status != "ok" or not text.strip():
             self.statusBar().clearMessage()
-            QMessageBox.warning(self, "Local AI", text or "The local AI returned nothing.")
+            self._ai_problem(text or "The local AI returned nothing.")
             return
         if action == "summarise_note":
             # Through a cursor, not setPlainText, so Undo can take it back.
@@ -646,7 +656,6 @@ class MainWindow(QMainWindow):
         (self.act_paged if note.meta.layout == "paged" else self.act_continuous).setChecked(True)
         self.editor.work_dir = self.work_dir
         self.header.load(note)
-        self.header.attachments.set_attachments(note.attachments)
         self._docs.clear()
         self._doc_att = None
         self.doc_dock.hide()
@@ -1099,7 +1108,7 @@ class MainWindow(QMainWindow):
 
     def add_files(self, files: list) -> None:
         """Files dropped or chosen: pictures go on the page, documents
-        are attached."""
+        are put in the note as an icon, where the cursor is."""
         attached, skipped = [], []
         for fn in files:
             path = Path(fn)
@@ -1108,35 +1117,45 @@ class MainWindow(QMainWindow):
                 shutil.copyfile(path, dest)
                 self.editor.insert_image(rel, QImage(str(dest)))
             elif documents.kind_of(path) and path.is_file():
-                rel, dest = self._new_asset(path.suffix.lower())
+                rel, _ = self._new_asset(path.suffix.lower())
                 rel = rel.replace("assets/", "assets/att-")
-                dest = self.work_dir / rel
-                shutil.copyfile(path, dest)
-                att = Attachment(rel, path.name)
-                self.note.attachments.append(att)
-                attached.append(att)
+                shutil.copyfile(path, self.work_dir / rel)
+                self.editor.insert_attachment(rel, path.name)
+                attached.append(Attachment(rel, path.name))
             else:
                 skipped.append(path.name)
         if attached:
-            self.header.attachments.set_attachments(self.note.attachments)
-            self._header_changed()
             self.show_document(attached[-1])
         if skipped:
-            QMessageBox.information(self, "Attach", "These cannot be attached (use PDF, Word "
+            QMessageBox.information(self, "Insert", "These cannot be inserted (use PDF, Word "
                                     ".docx, PowerPoint .pptx, text or pictures):\n\n"
                                     + "\n".join(skipped))
 
-    def _remove_attachment(self, att: Attachment) -> None:
-        if QMessageBox.question(self, "Remove", f"Remove {att.name} from this note?") \
-                != QMessageBox.Yes:
+    def _update_drop_hint(self) -> None:
+        self.header.drop_hint.setVisible(not self.editor.attachments())
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        files = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if files:
+            event.acceptProposedAction()
+            self.add_files(files)
+
+    def _attachment_action(self, action: str, path: str, name: str) -> None:
+        att = Attachment(path, name)
+        if action == "open_file":
+            self._open_attachment_file(att)
             return
-        self.note.attachments = [a for a in self.note.attachments if a.path != att.path]
-        self._docs.pop(att.path, None)
-        if self._doc_att is not None and self._doc_att.path == att.path:
-            self.doc_dock.hide()
-            self._doc_att = None
-        self.header.attachments.set_attachments(self.note.attachments)
-        self._header_changed()
+        then = {
+            "summarise": lambda doc: self._doc_summarise(),
+            "summarise_sections": lambda doc: self._doc_summarise_sections(),
+            "find": lambda doc: self.doc_panel.find.setFocus(),
+            "ask": lambda doc: self.doc_panel.question.setFocus(),
+        }.get(action)
+        self.show_document(att, then)
 
     def _open_attachment_file(self, att: Attachment) -> None:
         # A copy named as the user knows it, so the other app shows a
@@ -1146,13 +1165,18 @@ class MainWindow(QMainWindow):
         shutil.copyfile(self.work_dir / att.path, view)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(view)))
 
-    def show_document(self, att: Attachment) -> None:
+    def show_document(self, att: Attachment, then=None) -> None:
+        """Open *att* in the Document panel, then call *then(doc)* once it
+        has been read."""
         self._doc_att = att
         self.doc_dock.show()
         self.doc_dock.raise_()
         doc = self._docs.get(att.path)
         if doc is not None:
-            self.doc_panel.set_document(doc)
+            if self.doc_panel.doc is not doc:
+                self.doc_panel.set_document(doc)
+            if then:
+                then(doc)
             return
         self.doc_panel.set_loading(att.name)
         signals = _Signals(self)
@@ -1164,6 +1188,8 @@ class MainWindow(QMainWindow):
                 self._docs[att.path] = value
                 if self._doc_att is att:
                     self.doc_panel.set_document(value)
+                    if then:
+                        then(value)
             else:
                 self.doc_panel.set_failed(att.name, value)
         signals.done.connect(done)
@@ -1179,13 +1205,16 @@ class MainWindow(QMainWindow):
         return self.doc_panel.doc
 
     def _ai_write(self, message: str, title: str, job) -> None:
-        """Run *job(model)* with the local AI off the GUI thread and write
-        its answer into the note as a section called *title*."""
+        """Run *job(model, progress)* with the local AI off the GUI thread
+        and write its answer into the note as a section called *title*;
+        *progress(text)* shows how far a long job has got."""
         if self._ai_busy:
             self.statusBar().showMessage("The local AI is still writing…", 4000)
             return
         preferred = self.settings.value("ai/ollama_model", "")
         signals = _Signals(self)
+        progress = _Signals(self)
+        progress.done.connect(lambda text: self.statusBar().showMessage(text))
         self._ai_busy = True
         self.statusBar().showMessage(message)
 
@@ -1194,7 +1223,7 @@ class MainWindow(QMainWindow):
             status, text = result
             if status != "ok" or not text.strip():
                 self.statusBar().clearMessage()
-                QMessageBox.warning(self, "Local AI", text or "The local AI returned nothing.")
+                self._ai_problem(text or "The local AI returned nothing.")
                 return
             insert_section(self.editor, title, markdown_blocks(text))
             self.statusBar().showMessage("Written into the note — Ctrl+Z undoes it", 6000)
@@ -1204,21 +1233,27 @@ class MainWindow(QMainWindow):
             try:
                 model = local_ai.pick_default(local_ai.list_models(), preferred)
                 if not model:
-                    raise local_ai.OllamaError("Ollama has no models yet — "
-                                               "run `ollama pull qwen3.5:4b` (or another).")
-                signals.done.emit(("ok", job(model)))
+                    raise local_ai.OllamaError("Ollama has no models yet.")
+                signals.done.emit(("ok", job(model, progress.done.emit)))
             except local_ai.OllamaError as exc:
                 signals.done.emit(("error", str(exc)))
             except Exception as exc:  # noqa: BLE001
                 signals.done.emit(("error", f"The local AI failed: {exc}"))
         threading.Thread(target=work, daemon=True).start()
 
+    def _doc_summarise_sections(self) -> None:
+        doc = self._doc()
+        if doc is not None:
+            self._ai_write(f"Summarising every section of {doc.name}…",
+                           f"Summary by section — {doc.name}",
+                           lambda m, progress: local_ai.summarise_each_section(m, doc, progress))
+
     def _doc_summarise(self) -> None:
         doc = self._doc()
         if doc is not None:
             self._ai_write(f"Summarising {doc.name}… (a long document takes a while)",
                            f"Summary — {doc.name}",
-                           lambda m: local_ai.summarise_document(m, doc))
+                           lambda m, _p: local_ai.summarise_document(m, doc))
 
     def _doc_summarise_section(self, i: int) -> None:
         doc = self._doc()
@@ -1227,14 +1262,14 @@ class MainWindow(QMainWindow):
         sec = doc.sections[i]
         name = sec.title or doc.name
         self._ai_write(f"Summarising “{name}”…", f"{name} — summary",
-                       lambda m: local_ai.summarise_section(m, doc.name, name, sec.text))
+                       lambda m, _p: local_ai.summarise_section(m, doc.name, name, sec.text))
 
     def _doc_ask(self, question: str) -> None:
         doc = self._doc()
         if doc is not None:
             title = question if len(question) <= 90 else question[:87] + "…"
             self._ai_write(f"Reading {doc.name} to answer…", title,
-                           lambda m: local_ai.answer(m, doc, question))
+                           lambda m, _p: local_ai.answer(m, doc, question))
             self.doc_panel.question.clear()
 
     def _doc_insert_section(self, i: int) -> None:
@@ -1258,14 +1293,29 @@ class MainWindow(QMainWindow):
     # ── undo / help ────────────────────────────────────────────────
 
     def _undo_target(self):
+        # Only a text box of this window — the focus may be elsewhere.
         w = QApplication.focusWidget()
-        return w if isinstance(w, (QTextEdit, QLineEdit)) else self.editor
+        if isinstance(w, (QTextEdit, QLineEdit)) and self.isAncestorOf(w):
+            return w
+        return self.editor
 
     def _undo(self) -> None:
         self._undo_target().undo()
 
     def _redo(self) -> None:
         self._undo_target().redo()
+
+    def _ai_problem(self, message: str) -> None:
+        box = QMessageBox(QMessageBox.Warning, "Local AI", message, parent=self)
+        setup = box.addButton("Set up the local AI…", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Close)
+        box.exec()
+        if box.clickedButton() is setup:
+            self.show_ai_setup()
+
+    def show_ai_setup(self) -> None:
+        from .ai_setup import AISetupDialog
+        AISetupDialog(self.settings, self).exec()
 
     def show_manual(self) -> None:
         from .manual import ManualDialog

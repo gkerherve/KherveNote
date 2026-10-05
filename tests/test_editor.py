@@ -1,5 +1,5 @@
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -195,3 +195,43 @@ def test_live_words_after_a_heading_start_their_own_line(ed):
     assert host.layout().preeditAreaText() == " hello"
     ed.show_partial("")
     assert host.layout().preeditAreaText() == ""
+
+
+def test_attachment_icon_in_the_page_round_trips_and_is_clickable(ed, app):
+    from khervenote.model import Attachment
+    load_note(ed, Note.new())
+    QTest.keyClicks(ed, "before")
+    ed.insert_attachment("assets/att-1.pdf", "Handbook.pdf")
+    QTest.keyClicks(ed, "after")
+    n = document_to_note(ed.document(), Note.new())
+    assert [(b.kind, b.text, b.path) for b in n.sections[0].blocks] == [
+        ("typed", "before", ""), ("attachment", "Handbook.pdf", "assets/att-1.pdf"),
+        ("typed", "after", "")]
+    assert n.attachments == [Attachment("assets/att-1.pdf", "Handbook.pdf")]
+    load_note(ed, n)
+    again = document_to_note(ed.document(), Note.new())
+    assert [b.kind for b in again.sections[0].blocks] == ["typed", "attachment", "typed"]
+    # Clicking the icon asks for the document.
+    ed.resize(900, 600)
+    ed.show()
+    app.processEvents()
+    block = ed.document().findBlockByNumber(1)
+    rect = ed.document().documentLayout().blockBoundingRect(block)
+    seen = []
+    ed.attachment_action.connect(lambda *a: seen.append(a))
+    QTest.mouseClick(ed.viewport(), Qt.LeftButton, pos=rect.center().toPoint()
+                     - QPoint(int(rect.width() / 2) - 40, 0))
+    assert seen and seen[0] == ("open", "assets/att-1.pdf", "Handbook.pdf")
+    ed._remove_chip_at("assets/att-1.pdf")
+    assert document_to_note(ed.document(), Note.new()).attachments == []
+    ed.hide()
+
+
+def test_notes_from_0_12_get_their_icons(ed):
+    from khervenote.model import Attachment
+    n = Note.new()
+    n.add_block("typed", "x")
+    n.attachments = [Attachment("assets/att-2.docx", "Plan.docx")]
+    load_note(ed, n)
+    back = document_to_note(ed.document(), Note.new())
+    assert back.sections[0].blocks[0].kind == "attachment"

@@ -18,13 +18,13 @@ from __future__ import annotations
 import re
 from typing import Callable, Optional
 
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QColor, QFont, QImage, QPainter, QTextBlock, QTextBlockFormat,
+    QColor, QFont, QFontMetricsF, QImage, QPainter, QTextBlock, QTextBlockFormat,
     QTextBlockUserData, QTextCharFormat, QTextCursor, QTextDocument,
     QTextFormat, QTextImageFormat, QTextLayout, QTextListFormat,
 )
-from PySide6.QtWidgets import QTextEdit, QWidget
+from PySide6.QtWidgets import QMenu, QTextEdit, QWidget
 
 from . import theme
 from .model import Block, Note, Section
@@ -181,6 +181,52 @@ def set_list(block: QTextBlock, numbered: Optional[bool], level: int = 0) -> Non
     QTextCursor(block).createList(fmt)
 
 
+# ── attached documents in the page ──────────────────────────────────
+
+#: Image-resource names of attachment icons: CHIP + path + "|" + name.
+CHIP = "knote-attachment:"
+
+
+def chip_name(path: str, name: str) -> str:
+    return f"{CHIP}{path}|{name}"
+
+
+def parse_chip(resource: str) -> Optional[tuple[str, str]]:
+    """(path, name) of an attachment icon's resource name, else None."""
+    if not resource.startswith(CHIP):
+        return None
+    path, _, name = resource[len(CHIP):].partition("|")
+    return path, name or path.rsplit("/", 1)[-1]
+
+
+def chip_image(name: str) -> QImage:
+    """The icon an attached document shows in the page: its type and name
+    on a rounded tag, in the current theme."""
+    from . import icons
+    from .documents import kind_of
+    font = QFont()
+    font.setPointSizeF(BASE_PT)
+    fm = QFontMetricsF(font)
+    label = name if len(name) <= 48 else name[:45] + "…"
+    ratio = 2
+    w, h = int(fm.horizontalAdvance(label) + 58), 38
+    img = QImage(w * ratio, h * ratio, QImage.Format_ARGB32_Premultiplied)
+    img.setDevicePixelRatio(ratio)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    p.setPen(theme.color("border"))
+    p.setBrush(theme.color("button"))
+    p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 7, 7)
+    p.drawPixmap(8, 5, icons.document(kind_of(name) or "").pixmap(28, 28))
+    p.setFont(font)
+    p.setPen(theme.color("text"))
+    p.drawText(QRectF(44, 0, w - 50, h), Qt.AlignVCenter | Qt.AlignLeft, label)
+    p.end()
+    return img
+
+
 # ── the gutter ──────────────────────────────────────────────────────
 
 class _Gutter(QWidget):
@@ -240,6 +286,9 @@ class NoteEditor(QTextEdit):
     ai_requested = Signal(str)
     #: Local files dropped or pasted onto the page.
     files_dropped = Signal(list)
+    #: An attachment icon was clicked ("open") or a menu action chosen on
+    #: it: (action, path, name).
+    attachment_action = Signal(str, str, str)
 
     def __init__(self, clock: Callable[[], Optional[float]], parent=None) -> None:
         super().__init__(parent)
@@ -269,7 +318,19 @@ class NoteEditor(QTextEdit):
 
     # theme & geometry
 
+    def _refresh_chips(self) -> None:
+        doc = self.document()
+        block = doc.begin()
+        while block.isValid():
+            for res in _block_images(block):
+                if parse_chip(res):
+                    doc.addResource(QTextDocument.ImageResource, QUrl(res),
+                                    chip_image(parse_chip(res)[1]))
+                    doc.markContentsDirty(block.position(), block.length())
+            block = block.next()
+
     def apply_theme(self) -> None:
+        self._refresh_chips()
         page, text = theme.hex_("page"), theme.hex_("text")
         self.setStyleSheet(f"QTextEdit{{background:{page}; color:{text}; border:none;}}")
         block = self.document().begin()
@@ -511,6 +572,9 @@ class NoteEditor(QTextEdit):
             QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
     def loadResource(self, rtype: int, url: QUrl):  # noqa: N802
+        chip = parse_chip(url.toString()) if rtype == QTextDocument.ImageResource else None
+        if chip is not None:
+            return chip_image(chip[1])
         if rtype == QTextDocument.ImageResource and self.work_dir is not None:
             img = QImage(str(self.work_dir / url.toString()))
             if not img.isNull():
@@ -582,6 +646,10 @@ class NoteEditor(QTextEdit):
     # local AI
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802
+        chip = self.attachment_at(event.pos())
+        if chip:
+            self._attachment_menu(chip, event.globalPos())
+            return
         if not self.textCursor().hasSelection():
             self.setTextCursor(self.cursorForPosition(event.pos()))
         menu = self.createStandardContextMenu(event.pos())
@@ -656,6 +724,93 @@ class NoteEditor(QTextEdit):
         at.insertText(text.strip().replace("\n", _LINE_SEP))
         at.endEditBlock()
         self.setTextCursor(at)
+
+    def insert_attachment(self, path: str, name: str) -> None:
+        """The document's icon in a paragraph of its own, where the cursor
+        is (one undo step)."""
+        cur = self.textCursor()
+        cur.beginEditBlock()
+        cur.movePosition(QTextCursor.EndOfBlock)
+        new = bool(cur.block().text().strip()) or cur.block().textList() is not None
+        _write_block(self, cur, Block(kind="attachment", path=path, text=name,
+                                      t=self.clock()), new)
+        if not cur.block().next().isValid():
+            _write_block(self, cur, Block(kind="typed"), True)
+        else:
+            cur.movePosition(QTextCursor.NextBlock)
+        cur.endEditBlock()
+        self.setTextCursor(cur)
+
+    def attachments(self) -> list[tuple[str, str]]:
+        """(path, name) of every document icon in the page."""
+        out = []
+        block = self.document().begin()
+        while block.isValid():
+            out += [parse_chip(r) for r in _block_images(block) if parse_chip(r)]
+            block = block.next()
+        return out
+
+    def attachment_at(self, pos) -> Optional[tuple[str, str]]:
+        """(path, name) of the attachment icon under viewport point *pos*."""
+        doc_pos = QPointF(pos) + QPointF(self.horizontalScrollBar().value(),
+                                         self.verticalScrollBar().value())
+        hit = self.document().documentLayout().hitTest(doc_pos, Qt.ExactHit)
+        if hit < 0:
+            return None
+        for at in (hit + 1, hit):
+            cur = QTextCursor(self.document())
+            cur.setPosition(min(at, self.document().characterCount() - 1))
+            fmt = cur.charFormat()
+            if fmt.isImageFormat():
+                chip = parse_chip(fmt.toImageFormat().name())
+                if chip:
+                    return chip
+        return None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        super().mousePressEvent(event)
+        if event.button() == Qt.LeftButton:
+            chip = self.attachment_at(event.position().toPoint())
+            if chip:
+                self.attachment_action.emit("open", *chip)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        super().mouseMoveEvent(event)
+        over = self.attachment_at(event.position().toPoint()) is not None
+        self.viewport().setCursor(Qt.PointingHandCursor if over else Qt.IBeamCursor)
+
+    def _attachment_menu(self, chip, global_pos) -> None:
+        path, name = chip
+        menu = QMenu(self)
+        for label, action in (("Open in the Document panel", "open"),
+                              ("Summarise the document", "summarise"),
+                              ("Summarise every section", "summarise_sections"),
+                              ("Find in it…", "find"),
+                              ("Ask the AI about it…", "ask"),
+                              (None, None),
+                              ("Open with its own app", "open_file")):
+            if label is None:
+                menu.addSeparator()
+            else:
+                menu.addAction(label, lambda a=action: self.attachment_action.emit(a, path, name))
+        menu.addSeparator()
+        menu.addAction("Remove from the note (Undo brings it back)",
+                       lambda: self._remove_chip_at(path))
+        menu.exec(global_pos)
+
+    def _remove_chip_at(self, path: str) -> None:
+        block = self.document().begin()
+        while block.isValid():
+            if any(parse_chip(r) and parse_chip(r)[0] == path for r in _block_images(block)):
+                cur = QTextCursor(block)
+                cur.beginEditBlock()
+                cur.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+                cur.removeSelectedText()
+                if block.next().isValid():
+                    cur.deleteChar()            # the paragraph break as well
+                cur.endEditBlock()
+                return
+            block = block.next()
 
     def insert_paragraph(self, text: str, marks: Optional[list] = None) -> None:
         """A new paragraph after the one the cursor is in (one undo step)."""
@@ -735,14 +890,15 @@ def document_to_note(doc: QTextDocument, note: Note) -> Note:
         text = raw.replace(_LINE_SEP, "\n")
         kind, level = block_kind(block)
         t = block_time(block)
-        images = []
-        it = block.begin()
-        while not it.atEnd():
-            frag = it.fragment()
-            if frag.isValid() and frag.charFormat().isImageFormat():
-                images.append(frag.charFormat().toImageFormat().name())
-            it += 1
+        images = _block_images(block)
+        chips = [parse_chip(r) for r in images if parse_chip(r)]
+        images = [r for r in images if not parse_chip(r)]
         lvl = list_level(block)
+        for path, name in chips:
+            sections[-1].blocks.append(Block(kind="attachment", path=path, text=name, t=t))
+        if chips and not images:
+            block = block.next()
+            continue
         if images:
             caption = text.replace(_OBJ, "").strip()
             for i, path in enumerate(images):
@@ -763,7 +919,19 @@ def document_to_note(doc: QTextDocument, note: Note) -> Note:
         # The page starts with a section heading: no untitled lead-in.
         sections.pop(0)
     note.sections = sections
+    note.attachments = note.attachment_blocks()
     return note
+
+
+def _block_images(block: QTextBlock) -> list[str]:
+    out = []
+    it = block.begin()
+    while not it.atEnd():
+        frag = it.fragment()
+        if frag.isValid() and frag.charFormat().isImageFormat():
+            out.append(frag.charFormat().toImageFormat().name())
+        it += 1
+    return out
 
 
 def _write_block(editor: NoteEditor, cur: QTextCursor, b: Block, new: bool) -> None:
@@ -773,6 +941,20 @@ def _write_block(editor: NoteEditor, cur: QTextCursor, b: Block, new: bool) -> N
     if new:
         cur.insertBlock(QTextBlockFormat(), QTextCharFormat())
     block = cur.block()
+    if b.kind == "attachment":
+        apply_style(block, "typed")
+        block.setUserData(BlockMeta(b.t))
+        res = chip_name(b.path, b.text)
+        img = chip_image(b.text)
+        doc.addResource(QTextDocument.ImageResource, QUrl(res), img)
+        fmt = QTextImageFormat()
+        fmt.setName(res)
+        fmt.setWidth(img.width() / img.devicePixelRatio())
+        fmt.setHeight(img.height() / img.devicePixelRatio())
+        fmt.setToolTip(f"{b.text} — click to open it; right-click for summaries, "
+                       "sections and search")
+        cur.insertImage(fmt)
+        return
     if b.kind == "image":
         apply_style(block, "typed")
         block.setUserData(BlockMeta(b.t))
@@ -809,8 +991,14 @@ def load_note(editor: NoteEditor, note: Note) -> None:
     cur = QTextCursor(doc)
     cur.beginEditBlock()
     first = True
+    shown = {a.path for a in note.attachment_blocks()}
+    # Notes from 0.12 listed attachments without placing their icons.
+    loose = [Block(kind="attachment", path=a.path, text=a.name)
+             for a in note.attachments if a.path not in shown]
     for i, sec in enumerate(note.sections):
         blocks = list(sec.blocks)
+        if i == 0:
+            blocks = loose + blocks
         if sec.title or i > 0:
             blocks.insert(0, Block(kind="heading", text=sec.title, t=sec.t, level=1))
         for b in blocks:

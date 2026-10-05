@@ -35,12 +35,13 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   meanwhile — the speech goes in above the line you are writing. Press
   again to stop — or just press Space or Return in the page (switch that
   off under *Speech*).
+  Speech-to-text is **Whisper running on this computer** (faster-whisper):
+  the audio never leaves it. The model downloads once (*Speech ▸ Model*:
+  tiny … large; Small by default), then it works offline. *Speech ▸
+  Language* and *Speech ▸ Microphone* choose the rest. The recording is
+  kept inside the `.knote`.
 - **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z, or the ↶ ↷ buttons) take back
-  anything, including what the AI or the microphone wrote. Speech-to-text is **Whisper running on this computer**
-  (faster-whisper): the audio never leaves it. The model downloads once
-  (*Speech ▸ Model*: tiny … large; Small by default), then it works
-  offline. *Speech ▸ Language* and *Speech ▸ Microphone* choose the rest.
-  The recording is kept inside the `.knote`.
+  anything, including what the AI or the microphone wrote.
 - **Local AI** (Ollama, on this computer): right-click on the page, the
   ✦ toolbar button or the *AI* menu —
   - *Rephrase* (Ctrl+Shift+R) rewrites the paragraph or selection as
@@ -49,12 +50,14 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
     selection) as a key-point box.
   - *Summarise the whole note* writes the summary at the top.
   Pick the model under *AI ▸ Local AI model*. Ctrl+Z undoes any of them.
-  Needs [Ollama](https://ollama.com) running with at least one model
-  (e.g. `ollama pull qwen3.5:4b`).
-- **Documents** (📎, or drop them on the page): attach PDF, Word,
-  PowerPoint or text files to a note. They show as icons; click one for
-  its sections, a search through it, a summary, or a question to the
-  local AI — answers are written into the note as sections, with pages.
+  Needs [Ollama](https://ollama.com): *AI ▸ Set up the local AI…* links
+  to it, installs a model in one click and compares them (Qwen, Granite,
+  Gemma, Llama).
+- **Documents**: drag a PDF, Word, PowerPoint or text file onto the page
+  (or **Insert PDF**). It sits in the note as an icon; click it for its
+  sections, a search through it, a summary of the whole or of every
+  section, or a question to the local AI — answers are written into the
+  note as sections, with pages.
 - **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
 - **Camera** (Ctrl+Shift+P): take a picture of a whiteboard, a slide or
   a handout with the computer's camera; Space takes it.
@@ -66,8 +69,8 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
 
 ## Coming next
 
-Claude over MCP, automatic section detection, and import of existing Word / PDF /
-PowerPoint notes. See `CLAUDE.md` for the roadmap.
+Claude over MCP and automatic section detection. See `CLAUDE.md` for
+the roadmap.
 
 ## Running from source
 

@@ -1,125 +1,44 @@
 # KherveNote — attached documents in the window
 # Copyright (C) 2026  Gwilherm Kerherve
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The strip of attachment icons under the note's title, and the
-Document panel: a document's sections, a search through it, and the
-questions and summaries the local AI writes back into the note."""
+"""The hint that documents can be dropped into a note, and the Document
+panel: a document's sections, a search through it, and the questions and
+summaries the local AI writes back into the note."""
 from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu,
-    QPushButton, QSizePolicy, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton,
+    QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import icons, theme
-from .documents import Document, Hit, find, kind_of
-from .model import Attachment
+from .documents import Document, find
 
 
-class FlowLayout(QLayout):
-    """Lays its items out in rows, wrapping like words in a paragraph."""
+class DropHint(QLabel):
+    """Shown under the note's title while the note has no documents, so
+    people know they can drop one in."""
 
-    def __init__(self, parent=None, spacing: int = 6) -> None:
-        super().__init__(parent)
-        self._items = []
-        self.setSpacing(spacing)
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item) -> None:  # noqa: N802
-        self._items.append(item)
-
-    def count(self) -> int:
-        return len(self._items)
-
-    def itemAt(self, i):  # noqa: N802
-        return self._items[i] if 0 <= i < len(self._items) else None
-
-    def takeAt(self, i):  # noqa: N802
-        return self._items.pop(i) if 0 <= i < len(self._items) else None
-
-    def expandingDirections(self):  # noqa: N802
-        return Qt.Orientations(0)
-
-    def hasHeightForWidth(self) -> bool:  # noqa: N802
-        return True
-
-    def heightForWidth(self, width: int) -> int:  # noqa: N802
-        return self._lay(QRect(0, 0, width, 0), True)
-
-    def setGeometry(self, rect) -> None:  # noqa: N802
-        super().setGeometry(rect)
-        self._lay(rect, False)
-
-    def sizeHint(self) -> QSize:  # noqa: N802
-        return self.minimumSize()
-
-    def minimumSize(self) -> QSize:  # noqa: N802
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        return size
-
-    def _lay(self, rect, test: bool) -> int:
-        x, y, line = rect.x(), rect.y(), 0
-        for item in self._items:
-            hint = item.sizeHint()
-            if x + hint.width() > rect.right() and line > 0:
-                x, y, line = rect.x(), y + line + self.spacing(), 0
-            if not test:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x += hint.width() + self.spacing()
-            line = max(line, hint.height())
-        return y + line - rect.y()
-
-
-class AttachmentStrip(QWidget):
-    """The note's documents as icons; click one to open it in the
-    Document panel."""
-
-    opened = Signal(object)          # Attachment
-    removed = Signal(object)
-    show_file = Signal(object)
+    clicked = Signal()
 
     def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.flow = FlowLayout(self)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        self.setVisible(False)
+        super().__init__("\U0001F4CE  Drag a PDF, Word or PowerPoint file onto the page to add "
+                         "it to this note — or click here", parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("The document appears as an icon in the note: click it to summarise "
+                        "it, see its sections, find words or ask the AI about it")
+        self.apply_theme()
 
-    def set_attachments(self, attachments: list[Attachment]) -> None:
-        while self.flow.count():
-            w = self.flow.takeAt(0).widget()
-            if w is not None:
-                w.deleteLater()
-        for att in attachments:
-            b = QToolButton()
-            b.setIcon(icons.document(kind_of(att.name) or ""))
-            b.setIconSize(QSize(22, 22))
-            name = att.name if len(att.name) <= 28 else att.name[:25] + "…"
-            b.setText(name)
-            b.setToolTip(f"{att.name}\nClick to open it in the Document panel — sections, "
-                         "find, summarise, ask the AI. Right-click for more.")
-            b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            b.setAutoRaise(True)
-            b.clicked.connect(lambda _=False, a=att: self.opened.emit(a))
-            b.setContextMenuPolicy(Qt.CustomContextMenu)
-            b.customContextMenuRequested.connect(
-                lambda pos, a=att, w=b: self._menu(a, w.mapToGlobal(pos)))
-            self.flow.addWidget(b)
-        self.setVisible(bool(attachments))
-        self.updateGeometry()
+    def apply_theme(self) -> None:
+        self.setStyleSheet(f"QLabel{{color:{theme.hex_('muted')}; border:1px dashed "
+                           f"{theme.hex_('border')}; border-radius:6px; padding:6px 10px;"
+                           f" margin-top:6px;}}")
 
-    def _menu(self, att: Attachment, pos) -> None:
-        menu = QMenu(self)
-        menu.addAction("Open in the Document panel", lambda: self.opened.emit(att))
-        menu.addAction("Open with its own app", lambda: self.show_file.emit(att))
-        menu.addSeparator()
-        menu.addAction("Remove from this note", lambda: self.removed.emit(att))
-        menu.exec(pos)
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.clicked.emit()
 
 
 class DocumentPanel(QWidget):
@@ -127,6 +46,7 @@ class DocumentPanel(QWidget):
     and ask the AI about it."""
 
     summarise = Signal()
+    summarise_all = Signal()
     summarise_section = Signal(int)
     insert_section = Signal(int)
     insert_quote = Signal(object)      # Hit
@@ -162,6 +82,10 @@ class DocumentPanel(QWidget):
         qrow.addWidget(ask)
         self.summary_btn = QPushButton(icons.sparkle(), "Summarise the whole document")
         self.summary_btn.clicked.connect(self.summarise)
+        self.sections_btn = QPushButton(icons.sparkle(), "Summarise every section")
+        self.sections_btn.setToolTip("A summary of each section, one after the other, "
+                                     "written into the note")
+        self.sections_btn.clicked.connect(self.summarise_all)
 
         self.sections = QTreeWidget()
         self.sections.setHeaderHidden(True)
@@ -196,6 +120,7 @@ class DocumentPanel(QWidget):
         col.setContentsMargins(8, 8, 8, 8)
         col.addLayout(top)
         col.addWidget(self.summary_btn)
+        col.addWidget(self.sections_btn)
         col.addLayout(qrow)
         col.addWidget(_caption("Sections"))
         col.addWidget(self.sections, 2)
@@ -207,7 +132,8 @@ class DocumentPanel(QWidget):
         self._enable(False)
 
     def _enable(self, on: bool) -> None:
-        for w in (self.summary_btn, self.question, self.sections, self.find, self.results):
+        for w in (self.summary_btn, self.sections_btn, self.question, self.sections, self.find,
+                  self.results):
             w.setEnabled(on)
 
     def set_loading(self, name: str) -> None:

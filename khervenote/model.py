@@ -29,8 +29,10 @@ FORMAT_VERSION = 1
 #: image      — a picture or slide screenshot stored in the note's assets
 #: heading    — a subsection heading inside a section (``level`` 2 or 3)
 #: item       — a list item (``level`` 0-3 nesting, ``numbered``)
+#: attachment — the icon of an attached document (``path``; ``text`` is
+#:              its name), where it sits in the note
 BLOCK_KINDS = ("typed", "transcript", "important", "question", "image",
-               "heading", "item")
+               "heading", "item", "attachment")
 
 #: Inline styles a span of block text can carry.
 MARK_STYLES = ("b", "i", "u")
@@ -238,6 +240,10 @@ class Note:
         sec = self.sections.pop(idx)
         self.sections[idx - 1].blocks.extend(sec.blocks)
 
+    def attachment_blocks(self) -> list[Attachment]:
+        return [Attachment(b.path, b.text) for s in self.sections for b in s.blocks
+                if b.kind == "attachment"]
+
     def asset_paths(self) -> list[str]:
         return ([b.path for s in self.sections for b in s.blocks if b.path]
                 + [r.path for r in self.recordings]
@@ -261,6 +267,8 @@ class Note:
                     lines.append("  " * b.level + f"{marker} {b.text}")
                 elif b.kind == "image":
                     lines.append(f"[image{': ' + b.text if b.text else ''}]")
+                elif b.kind == "attachment":
+                    lines.append(f"[attached document: {b.text}]")
                 else:
                     prefix = {"important": "Key point: ", "question": "Question: ",
                               "transcript": "(said) "}.get(b.kind, "")

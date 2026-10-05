@@ -131,37 +131,81 @@ on the page, use the **AI** button in the toolbar, or the *AI* menu:
   note.
 
 Choose the model under *AI ▸ Local AI model*; a general model such as
-qwen3.5 is picked by default. Ollama must be running with at least one
-model installed, e.g. `ollama pull qwen3.5:4b`. Every model Ollama has is
-listed — including custom ones made for other apps, such as the
-*xps-expert* models built for KherveFitting, which are marked as such
-and are not meant for notes.
+qwen3.5 is picked by default.
+
+### Setting up the local AI
+
+*AI ▸ Set up the local AI…* shows whether Ollama is running, links to
+the download, and installs a model with one click.
+
+1. **Install Ollama** — download it from
+   [ollama.com/download](https://ollama.com/download) (Mac, Windows,
+   Linux) and open it once; on a Mac it then runs in the menu bar. On a
+   Mac you can also type `brew install ollama` in Terminal.
+2. **Install a model** — press *Install* next to one in the set-up
+   window (or type `ollama pull qwen3.5:4b` in Terminal). It downloads
+   once, then works without internet.
+3. **Choose it** — *Use this* in the set-up window, or *AI ▸ Local AI
+   model*.
+
+**Which model?** Bigger models write better but are slower and need more
+memory — keep the model under about a third of the computer's memory.
+
+| Model | Size | Made by | Good for |
+|---|---|---|---|
+| [qwen3.5:4b](https://ollama.com/library/qwen3.5) | 3.4 GB | Alibaba | **Recommended.** The best all-rounder for notes: good summaries and rewriting, many languages, long documents. |
+| [granite4:micro-h](https://ollama.com/library/granite4) | 1.9 GB | IBM | Small and fast, light on memory even with long texts. Plain, factual style; fewer languages than Qwen. Good on an 8 GB laptop. |
+| [gemma3:4b](https://ollama.com/library/gemma3) | ≈ 3.3 GB | Google | Natural, readable writing; several languages. |
+| [llama3.2:3b](https://ollama.com/library/llama3.2) | ≈ 2 GB | Meta | Quick, good English; weaker on long documents and other languages. |
+
+**Qwen or Granite?** Qwen 3.5 gives the most polished summaries and
+rewrites and handles French, German and other languages best — use it
+if the computer has 16 GB of memory or more. Granite 4 micro is about
+half the size and stays quick on long documents thanks to its hybrid
+design; its writing is plainer and more literal, and it is strongest in
+English. Both are free to use.
+
+Every model Ollama has is listed under *AI ▸ Local AI model* —
+including custom ones made for other apps, such as the *xps-expert*
+models built for KherveFitting, which are marked as such and are not
+meant for notes.
 
 **Not happy with what the AI wrote? Press Undo** (Ctrl+Z, or the ↶
 button): each AI change is one undo step.
 
 ## 7. Documents — PDF, Word, PowerPoint
 
-Attach the handouts, slides or papers of a talk to its note:
+Put the handouts, slides or papers of a talk into its note:
 
-- the **📎 Attach** button (Ctrl+Shift+A), or **drop the files on the
-  page**. PDF, Word (`.docx`), PowerPoint (`.pptx`), text and Markdown
-  files can be attached; pictures dropped on the page go into the text.
-- Each document shows as an **icon** under the note's title, and is kept
-  inside the note file. Right-click an icon to open it in its own app or
-  remove it from the note.
+- **Drag the file onto the page** — from Finder, the desktop or an
+  e-mail — and drop it where you want it; or
+- press **Insert PDF** in the toolbar (Ctrl+Shift+A), or *Insert ▸ PDF,
+  Word or PowerPoint document…*.
 
-**Click an icon** to open the **Document** panel on the right:
+PDF, Word (`.docx`), PowerPoint (`.pptx`), text and Markdown files work.
+The document appears **as an icon in the note**, where you dropped it,
+and is kept inside the note file. While a note has no document, a
+dashed "Drag a PDF…" line under the title is a reminder.
 
+**Click the icon** to open the **Document** panel on the right.
+**Right-click it** for *Summarise the document*, *Summarise every
+section*, *Find in it…*, *Ask the AI about it…*, *Open with its own
+app* and *Remove from the note*.
+
+In the Document panel:
+
+- **Summarise the whole document** — the AI writes a summary section.
+  Long documents are summarised part by part, so it takes a little time.
+- **Summarise every section** — one summary per chapter of the
+  document, each under its own heading, in a single new section of your
+  note. The status bar shows which section it is on.
 - **Sections** — the document's own chapters (a PDF's bookmarks, Word
   headings, one per slide, or one per page). Double-click a section, or
-  *Insert into note*, to copy it into the note as a new section.
-  *Summarise section* asks the AI for its key points instead.
+  *Insert into note*, to copy it into the note; *Summarise section* asks
+  the AI for its key points instead.
 - **Find** — type words or a sentence: every place it appears is listed
   with its page and the sentence around it. Double-click one to quote it
   in the note, with its page.
-- **Summarise the whole document** — the AI writes a summary section.
-  Long documents are summarised part by part, so it takes a little time.
 - **Ask the AI about this document** — type a question and press Enter.
   The AI reads the passages that best match the question and writes the
   answer as a **new section** of your note, with page references such as
@@ -226,6 +270,6 @@ Text typed after a picture on the same line becomes its caption.
 | Sub-item / back out | Tab / Shift+Tab (in a list) |
 | Rephrase / Summarise with AI | Ctrl+Shift+R / Ctrl+Alt+S |
 | Take a picture | Ctrl+Shift+P |
-| Attach a document | Ctrl+Shift+A |
+| Insert a PDF / Word / PowerPoint document | Ctrl+Shift+A |
 | Export PDF | Ctrl+E |
 | This manual | F1 |
