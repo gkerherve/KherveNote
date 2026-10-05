@@ -22,6 +22,8 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
   export as 1.1, 1.2, 1.2.1 — Shift+Tab goes back, Enter on an empty item
   leaves the list.
 - **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
+- **Camera** (Ctrl+Shift+P): take a picture of a whiteboard, a slide or
+  a handout with the computer's camera; Space takes it.
 - **Theme**: *View ▸ Theme* — System, Light or Dark (a black page).
 - **Export PDF** (Ctrl+E) — continuous page by default, A4 under
   *Export ▸ A4 pages*. **Export LaTeX** writes a standalone `.tex` and

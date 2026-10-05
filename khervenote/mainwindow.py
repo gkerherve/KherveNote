@@ -219,6 +219,8 @@ class MainWindow(QMainWindow):
                               "Mark the paragraph as a question (Ctrl+Shift+Q)")
         self.act_image = A("Image", self.insert_image, None,
                            "Insert a picture; paste (Ctrl+V) works for screenshots")
+        self.act_camera = A("Take a picture", self.take_photo, "Ctrl+Shift+P",
+                            "Take a picture with the camera — a whiteboard, a slide (Ctrl+Shift+P)")
         self.act_pdf = A("Export PDF", self.export_pdf, "Ctrl+E",
                          "Compile the note to PDF (Ctrl+E)")
         self.act_tex = A("Export LaTeX", self.export_tex)
@@ -273,7 +275,7 @@ class MainWindow(QMainWindow):
                   self.act_underline, None, self.act_bullets, self.act_numbers):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("&Note")
-        for a in (self.act_listen, self.act_section, self.act_image, None,
+        for a in (self.act_listen, self.act_section, self.act_image, self.act_camera, None,
                   self.act_summary, self.act_clock):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("&Export")
@@ -296,7 +298,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.style_box)
         for a in (self.act_bold, self.act_italic, self.act_underline, None, self.act_bullets,
                   self.act_numbers, None, self.act_section, self.act_key, self.act_question,
-                  self.act_image, None, self.act_pdf, self.act_tex):
+                  self.act_image, self.act_camera, None, self.act_pdf, self.act_tex):
             tb.addSeparator() if a is None else tb.addAction(a)
         self.addToolBar(tb)
         self.toolbar = tb
@@ -308,7 +310,8 @@ class MainWindow(QMainWindow):
                         (self.act_italic, icons.italic()), (self.act_underline, icons.underline()),
                         (self.act_bullets, icons.bullets()), (self.act_numbers, icons.numbering()),
                         (self.act_key, icons.star()), (self.act_question, icons.question()),
-                        (self.act_image, icons.image()), (self.act_pdf, icons.export_pdf()),
+                        (self.act_image, icons.image()), (self.act_camera, icons.camera()),
+                        (self.act_pdf, icons.export_pdf()),
                         (self.act_tex, icons.export_tex())):
             a.setIcon(icon)
 
@@ -410,10 +413,23 @@ class MainWindow(QMainWindow):
         (self.work_dir / "assets").mkdir(exist_ok=True)
         return rel, self.work_dir / rel
 
-    def _add_image(self, image: QImage) -> None:
-        rel, dest = self._new_asset(".png")
-        image.save(str(dest), "PNG")
+    def _add_image(self, image: QImage, photo: bool = False) -> None:
+        # Photos compress far better as JPEG; screenshots stay sharp as PNG.
+        rel, dest = self._new_asset(".jpg" if photo else ".png")
+        image.save(str(dest), "JPG" if photo else "PNG", 90 if photo else -1)
         self.editor.insert_image(rel, image)
+
+    def take_photo(self) -> None:
+        from .camera import CameraDialog, cameras, with_camera_permission
+        if not cameras():
+            QMessageBox.information(self, "Camera", "No camera was found on this computer.")
+            return
+
+        def shoot() -> None:
+            dlg = CameraDialog(self)
+            if dlg.exec() and dlg.image is not None and not dlg.image.isNull():
+                self._add_image(dlg.image, photo=True)
+        with_camera_permission(self, shoot)
 
     def insert_image(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(self, "Insert image", "",
