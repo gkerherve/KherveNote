@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# IDE configs
+.idea/
+.vscode/
+
+# Build artefacts
+build/
+dist/
+*.aux
+*.log
+*.out

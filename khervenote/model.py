@@ -1,0 +1,206 @@
+# KherveNote — document model
+# Copyright (C) 2026  Gwilherm Kerherve
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The note model: the single source of truth.
+
+A ``Note`` is one listening session (a lecture, a training, a talk).
+It is a flat run of ``Section``s, each holding ``Block``s in the order
+they were captured.  The live page, the ``.knote`` file, the LaTeX
+serializer and (later) the MCP tools all read and write through it.
+
+Times (``t``) are seconds since the session started, so a block can be
+matched back to the recording once there is one.
+"""
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+
+#: Bumped when the JSON layout changes incompatibly.
+FORMAT_VERSION = 1
+
+#: typed      — what the note-taker wrote
+#: transcript — speech-to-text (v0.2)
+#: important  — flagged by the note-taker as a key point
+#: question   — something to ask or look up
+#: image      — a picture or slide screenshot stored in the note's assets
+BLOCK_KINDS = ("typed", "transcript", "important", "question", "image")
+
+LAYOUTS = ("continuous", "paged")
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:10]
+
+
+@dataclass
+class Block:
+    kind: str = "typed"
+    text: str = ""
+    t: Optional[float] = None
+    #: Asset path relative to the note (``assets/<name>``), images only.
+    path: str = ""
+    id: str = field(default_factory=_new_id)
+
+    def __post_init__(self) -> None:
+        if self.kind not in BLOCK_KINDS:
+            raise ValueError(f"unknown block kind {self.kind!r}")
+
+    def to_dict(self) -> dict:
+        d = {"id": self.id, "kind": self.kind, "text": self.text}
+        if self.t is not None:
+            d["t"] = round(self.t, 2)
+        if self.path:
+            d["path"] = self.path
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Block":
+        return cls(kind=d.get("kind", "typed"), text=d.get("text", ""),
+                   t=d.get("t"), path=d.get("path", ""),
+                   id=d.get("id") or _new_id())
+
+
+@dataclass
+class Section:
+    #: An empty title on the first section means "before any section was
+    #: started" — it is exported without a heading.
+    title: str = ""
+    t: Optional[float] = None
+    blocks: list[Block] = field(default_factory=list)
+    id: str = field(default_factory=_new_id)
+
+    def to_dict(self) -> dict:
+        d = {"id": self.id, "title": self.title,
+             "blocks": [b.to_dict() for b in self.blocks]}
+        if self.t is not None:
+            d["t"] = round(self.t, 2)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Section":
+        return cls(title=d.get("title", ""), t=d.get("t"),
+                   blocks=[Block.from_dict(b) for b in d.get("blocks", [])],
+                   id=d.get("id") or _new_id())
+
+
+@dataclass
+class Meta:
+    title: str = ""
+    speaker: str = ""
+    date: str = ""
+    place: str = ""
+    #: ISO timestamp of when the session started; block times count from it.
+    started: str = ""
+    layout: str = "continuous"
+
+    def __post_init__(self) -> None:
+        if self.layout not in LAYOUTS:
+            self.layout = "continuous"
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Meta":
+        known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
+
+
+@dataclass
+class Note:
+    meta: Meta = field(default_factory=Meta)
+    summary: str = ""
+    sections: list[Section] = field(default_factory=lambda: [Section()])
+
+    @classmethod
+    def new(cls, now: Optional[datetime] = None) -> "Note":
+        now = now or datetime.now()
+        return cls(meta=Meta(date=now.strftime("%d %B %Y"),
+                             started=now.isoformat(timespec="seconds")))
+
+    def __post_init__(self) -> None:
+        if not self.sections:
+            self.sections.append(Section())
+
+    # ── editing ────────────────────────────────────────────────────
+
+    @property
+    def current(self) -> Section:
+        """New material goes into the last section."""
+        return self.sections[-1]
+
+    def elapsed(self, now: Optional[datetime] = None) -> Optional[float]:
+        if not self.meta.started:
+            return None
+        try:
+            start = datetime.fromisoformat(self.meta.started)
+        except ValueError:
+            return None
+        return max(0.0, ((now or datetime.now()) - start).total_seconds())
+
+    def add_section(self, title: str = "", t: Optional[float] = None) -> Section:
+        sec = Section(title=title, t=t)
+        self.sections.append(sec)
+        return sec
+
+    def add_block(self, kind: str, text: str = "", t: Optional[float] = None,
+                  path: str = "") -> Block:
+        blk = Block(kind=kind, text=text, t=t, path=path)
+        self.current.blocks.append(blk)
+        return blk
+
+    def find_block(self, block_id: str) -> tuple[Section, int]:
+        for sec in self.sections:
+            for i, b in enumerate(sec.blocks):
+                if b.id == block_id:
+                    return sec, i
+        raise KeyError(block_id)
+
+    def remove_block(self, block_id: str) -> Block:
+        sec, i = self.find_block(block_id)
+        return sec.blocks.pop(i)
+
+    def split_at(self, block_id: str, title: str = "") -> Section:
+        """Start a new section at *block_id*, moving it and everything
+        after it in its section into the new one — for "a section began
+        here" decided after the fact."""
+        sec, i = self.find_block(block_id)
+        moved = sec.blocks[i:]
+        del sec.blocks[i:]
+        new = Section(title=title, t=moved[0].t, blocks=moved)
+        self.sections.insert(self.sections.index(sec) + 1, new)
+        return new
+
+    def remove_section(self, section_id: str) -> None:
+        """Drop a section heading; its blocks join the previous section.
+        The first section cannot be removed, only emptied of its title."""
+        idx = next(i for i, s in enumerate(self.sections) if s.id == section_id)
+        if idx == 0:
+            self.sections[0].title = ""
+            return
+        sec = self.sections.pop(idx)
+        self.sections[idx - 1].blocks.extend(sec.blocks)
+
+    def asset_paths(self) -> list[str]:
+        return [b.path for s in self.sections for b in s.blocks if b.path]
+
+    # ── persistence ────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        return {"format": FORMAT_VERSION, "meta": self.meta.to_dict(),
+                "summary": self.summary,
+                "sections": [s.to_dict() for s in self.sections]}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Note":
+        fmt = d.get("format", 1)
+        if fmt > FORMAT_VERSION:
+            raise ValueError(
+                f"this note was written by a newer KherveNote (format {fmt})")
+        return cls(meta=Meta.from_dict(d.get("meta", {})),
+                   summary=d.get("summary", ""),
+                   sections=[Section.from_dict(s)
+                             for s in d.get("sections", [])])
