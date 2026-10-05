@@ -249,7 +249,7 @@ class NoteEditor(QTextEdit):
         self.setTabChangesFocus(False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setPlaceholderText("Start writing… — Ctrl+1 for a section, “- ” or “1. ” "
-                                "for a list, the microphone to write what is said")
+                                "for a list, the microphone to write what is said — F1 for the manual")
         doc = self.document()
         doc.setDocumentMargin(28)
         f = QFont(self.font())

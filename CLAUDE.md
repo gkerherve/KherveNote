@@ -64,6 +64,12 @@ the user's request.
 - The page is one seamless surface: no page edges, borders or desk
   colour around the text.
 
+## The user manual
+
+`khervenote/manual.md` is the manual — shown in the app (Help ▸ User
+manual, F1) and linked from the README. **Update it in the same commit
+as any user-visible change**: a new button, shortcut, menu or behaviour.
+
 ## The continuous PDF
 
 The default export is **one PDF page as tall as the note** (see the

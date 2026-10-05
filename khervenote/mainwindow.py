@@ -14,8 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeySequence
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QAction, QActionGroup, QDesktopServices, QImage, QKeySequence, QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDockWidget, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
@@ -171,6 +173,7 @@ class MainWindow(QMainWindow):
         self.editor.style_at_cursor.connect(self._show_style)
         self.editor.image_pasted.connect(self._add_image)
         self.editor.ai_requested.connect(self.run_ai)
+        self.editor.installEventFilter(self)
         self._ai_busy = False
         self.header = NoteHeader()
         self.header.changed.connect(self._header_changed)
@@ -236,8 +239,23 @@ class MainWindow(QMainWindow):
                             "Write what is said onto the page — offline Whisper, "
                             "the audio never leaves this computer (Ctrl+L)")
         self.act_listen.setCheckable(True)
-        self.act_section = A("Section", lambda: ed.new_section(), "Ctrl+Return",
-                             "Start a new section (Ctrl+Return)")
+        self.act_stop_on_key = A("Stop listening when I press Space or Return",
+                                 lambda on: self.settings.setValue("speech/stop_on_key", on))
+        self.act_stop_on_key.setCheckable(True)
+        self.act_stop_on_key.setChecked(
+            self.settings.value("speech/stop_on_key", True, type=bool))
+        self.act_section = A("New section", lambda: ed.new_section(), "Ctrl+Return",
+                             "Start a new section heading (Ctrl+Return) — or turn the "
+                             "current line into one with Ctrl+1")
+        self.act_undo = A("&Undo", self._undo, QKeySequence.Undo,
+                          "Undo — also takes back what the AI or the microphone wrote")
+        self.act_redo = A("&Redo", self._redo, QKeySequence.Redo)
+        ed.undoAvailable.connect(self.act_undo.setEnabled)
+        ed.redoAvailable.connect(self.act_redo.setEnabled)
+        self.act_undo.setEnabled(False)
+        self.act_redo.setEnabled(False)
+        self.act_manual = A("&User manual", self.show_manual, QKeySequence.HelpContents,
+                            "How to use KherveNote (F1)")
         self.act_bold = A("Bold", lambda: ed.set_mark("b"), QKeySequence.Bold)
         self.act_italic = A("Italic", lambda: ed.set_mark("i"), QKeySequence.Italic)
         self.act_underline = A("Underline", lambda: ed.set_mark("u"), QKeySequence.Underline)
@@ -261,9 +279,13 @@ class MainWindow(QMainWindow):
                            "Count times from now — use when the talk actually starts")
 
         self.style_box = QComboBox()
-        self.style_box.setToolTip("Paragraph style (Ctrl+0 text, Ctrl+1/2/3 headings)")
-        for label, _, _ in STYLES:
-            self.style_box.addItem(label)
+        self.style_box.setToolTip("Paragraph style — Section starts a new section")
+        style_keys = {0: "Ctrl+0", 1: "Ctrl+1", 2: "Ctrl+2", 3: "Ctrl+3",
+                      4: "Ctrl+Shift+K", 5: "Ctrl+Shift+Q"}
+        for i, (label, _, _) in enumerate(STYLES):
+            key = style_keys.get(i)
+            native = QKeySequence(key).toString(QKeySequence.NativeText) if key else ""
+            self.style_box.addItem(f"{label}   {native}" if native else label)
         self.style_box.activated.connect(self._pick_style)
         self._style_actions = []
         for key, idx in (("Ctrl+0", 0), ("Ctrl+1", 1), ("Ctrl+2", 2), ("Ctrl+3", 3)):
@@ -300,6 +322,15 @@ class MainWindow(QMainWindow):
         m.addAction(self.act_tex)
         m.addSeparator()
         m.addAction(A("&Quit", self.close, QKeySequence.Quit))
+        m = mb.addMenu("&Edit")
+        m.addAction(self.act_undo)
+        m.addAction(self.act_redo)
+        m.addSeparator()
+        for label, slot, key in (("Cu&t", ed.cut, QKeySequence.Cut),
+                                 ("&Copy", ed.copy, QKeySequence.Copy),
+                                 ("&Paste", ed.paste, QKeySequence.Paste),
+                                 ("Select &all", ed.selectAll, QKeySequence.SelectAll)):
+            m.addAction(A(label, slot, key))
         m = mb.addMenu("F&ormat")
         for a in self._style_actions:
             m.addAction(a)
@@ -321,22 +352,28 @@ class MainWindow(QMainWindow):
         for a in self._theme_actions.values():
             sub.addAction(a)
         m = mb.addMenu("&Help")
+        m.addAction(self.act_manual)
+        m.addSeparator()
         m.addAction(A("&About KherveNote", self.about))
 
         tb = QToolBar("Main")
         tb.setObjectName("main")
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        for a in (self.act_new, self.act_open, self.act_save, None, self.act_listen, None):
+        for a in (self.act_new, self.act_open, self.act_save, None, self.act_undo,
+                  self.act_redo, None, self.act_listen, self.act_section, None):
             tb.addSeparator() if a is None else tb.addAction(a)
         tb.addWidget(self.style_box)
         for a in (self.act_bold, self.act_italic, self.act_underline, None, self.act_bullets,
-                  self.act_numbers, None, self.act_section, self.act_key, self.act_question,
-                  self.act_image, self.act_camera, None, self.act_pdf, self.act_tex):
+                  self.act_numbers, None, self.act_key, self.act_question,
+                  self.act_image, self.act_camera, None, self.act_pdf, self.act_tex, None,
+                  self.act_manual):
             tb.addSeparator() if a is None else tb.addAction(a)
         ai_button = QToolButton()
         ai_button.setPopupMode(QToolButton.InstantPopup)
-        ai_button.setToolTip("Local AI (Ollama): rephrase, summarise")
+        ai_button.setToolTip("Local AI (Ollama): rephrase, summarise — also on right-click")
+        ai_button.setText("AI")
+        ai_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         ai_menu = QMenu(ai_button)
         for a in (self.act_rephrase, self.act_summarise, self.act_summarise_note):
             ai_menu.addAction(a)
@@ -344,11 +381,15 @@ class MainWindow(QMainWindow):
         tb.insertWidget(self.act_pdf, ai_button)
         tb.insertSeparator(self.act_pdf)
         self._ai_button = ai_button
+        # The things people look for first get their name next to the icon.
+        for a in (self.act_listen, self.act_section):
+            tb.widgetForAction(a).setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
         self.toolbar = tb
 
     def _build_speech_menu(self, menu) -> None:
         menu.addAction(self.act_listen)
+        menu.addAction(self.act_stop_on_key)
         menu.addSeparator()
         models = menu.addMenu("&Model")
         group = QActionGroup(self)
@@ -458,8 +499,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Local AI", text or "The local AI returned nothing.")
             return
         if action == "summarise_note":
-            self.header.summary.setPlainText(text.strip())
-            self.header.summary.setVisible(True)
+            # Through a cursor, not setPlainText, so Undo can take it back.
+            summary = self.header.summary
+            summary.setVisible(True)
+            cur_s = QTextCursor(summary.document())
+            cur_s.select(QTextCursor.Document)
+            cur_s.insertText(text.strip())
+            summary.setFocus()
         elif cur.selection().toPlainText() != original:
             # The text changed while the AI was writing (more speech, an
             # edit): put the result next to it rather than overwrite.
@@ -490,7 +536,8 @@ class MainWindow(QMainWindow):
                         (self.act_key, icons.star()), (self.act_question, icons.question()),
                         (self.act_image, icons.image()), (self.act_camera, icons.camera()),
                         (self.act_pdf, icons.export_pdf()),
-                        (self.act_tex, icons.export_tex())):
+                        (self.act_tex, icons.export_tex()), (self.act_undo, icons.undo()),
+                        (self.act_redo, icons.redo()), (self.act_manual, icons.help_book())):
             a.setIcon(icon)
         self._ai_button.setIcon(icons.sparkle())
 
@@ -888,6 +935,35 @@ class MainWindow(QMainWindow):
                     f"{len(pages)} continuous pages between sections")
         self.statusBar().showMessage(msg, 8000)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(dest)))
+
+    # ── undo / help ────────────────────────────────────────────────
+
+    def _undo_target(self):
+        w = QApplication.focusWidget()
+        return w if isinstance(w, (QTextEdit, QLineEdit)) else self.editor
+
+    def _undo(self) -> None:
+        self._undo_target().undo()
+
+    def _redo(self) -> None:
+        self._undo_target().redo()
+
+    def show_manual(self) -> None:
+        from .manual import ManualDialog
+        if getattr(self, "_manual", None) is None:
+            self._manual = ManualDialog(self)
+        self._manual.show()
+        self._manual.raise_()
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if (obj is self.editor and event.type() == QEvent.KeyPress
+                and self.session is not None and self.act_listen.isChecked()
+                and self.act_stop_on_key.isChecked()
+                and event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter)
+                and not event.modifiers() & (Qt.ControlModifier | Qt.MetaModifier)):
+            # Like dictation on a phone: starting to type yourself ends it.
+            self._stop_listening()
+        return super().eventFilter(obj, event)
 
     # ── misc ───────────────────────────────────────────────────────
 

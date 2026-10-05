@@ -10,6 +10,9 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
 
 ## Using it
 
+The full **[user manual](khervenote/manual.md)** is also in the app:
+*Help ▸ User manual* (F1).
+
 - Write straight onto the page — it is one endless sheet, no page edges.
   Each paragraph shows the time in the session it was written.
 - **Styles** (the picker in the toolbar, or Ctrl+0 / 1 / 2 / 3): Text,
@@ -27,7 +30,10 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
   A "● listening…" mark sits where the words will appear, and shows the
   download / loading state the first time. Keep typing your own notes
   meanwhile — the speech goes in above the line you are writing. Press
-  again to stop. Speech-to-text is **Whisper running on this computer**
+  again to stop — or just press Space or Return in the page (switch that
+  off under *Speech*).
+- **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z, or the ↶ ↷ buttons) take back
+  anything, including what the AI or the microphone wrote. Speech-to-text is **Whisper running on this computer**
   (faster-whisper): the audio never leaves it. The model downloads once
   (*Speech ▸ Model*: tiny … large; Small by default), then it works
   offline. *Speech ▸ Language* and *Speech ▸ Microphone* choose the rest.

@@ -259,6 +259,44 @@ def sparkle() -> QIcon:
     return _done(px, p)
 
 
+def _arrow(mirror: bool) -> QIcon:
+    px, p = _canvas()
+    if mirror:
+        p.translate(_SIZE, 0)
+        p.scale(-1, 1)
+    p.setPen(_pen(_fg(), 2.0))
+    path = QPainterPath()
+    path.moveTo(6, 10)
+    path.lineTo(15, 10)
+    path.cubicTo(22, 10, 22, 20, 15, 20)
+    path.lineTo(10, 20)
+    p.drawPath(path)
+    p.drawLine(QPointF(6, 10), QPointF(10, 6))
+    p.drawLine(QPointF(6, 10), QPointF(10, 14))
+    return _done(px, p)
+
+
+def undo() -> QIcon:
+    return _arrow(False)
+
+
+def redo() -> QIcon:
+    return _arrow(True)
+
+
+def help_book() -> QIcon:
+    px, p = _canvas()
+    p.setPen(_pen(_fg(), 1.6))
+    p.drawRoundedRect(QRectF(4, 3, 16, 18), 2, 2)
+    f = QFont()
+    f.setPixelSize(13)
+    f.setBold(True)
+    p.setFont(f)
+    p.setPen(_accent())
+    p.drawText(QRectF(4, 3, 16, 18), Qt.AlignCenter, "?")
+    return _done(px, p)
+
+
 def app_icon() -> QIcon:
     px = QPixmap(64, 64)
     px.fill(Qt.transparent)
