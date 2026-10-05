@@ -61,6 +61,13 @@ the user's request.
   Windows dark theme made drawn icons invisible). Colours come from
   `theme.color()`, never hard-coded in widgets; icons are redrawn on a
   theme change.
+- The notes library (`library.py`, Qt-free; `library_panel.py`) is a
+  plain folder tree on disk (`~/Documents/KherveNote` by default):
+  folders are folders, notes are `.knote` files. Never keep a separate
+  index or database the files could disagree with. Notes autosave
+  (2 s after a change, and before switching / quitting); deleting goes
+  to the Trash, never a hard delete. Tests must point `library/root`
+  at a temporary folder.
 - The page is one seamless surface: no page edges, borders or desk
   colour around the text.
 

@@ -14,6 +14,7 @@ def win(app, monkeypatch, tmp_path):
     from khervenote import mainwindow
     # Never read or write the user's real settings.
     ini = str(tmp_path / "settings.ini")
+    QSettings(ini, QSettings.IniFormat).setValue("library/root", str(tmp_path / "lib"))
     monkeypatch.setattr(mainwindow, "QSettings",
                         lambda *a: QSettings(ini, QSettings.IniFormat))
     w = mainwindow.MainWindow()
@@ -85,3 +86,56 @@ def test_manual_opens(win):
     view = win._manual.findChild(QTextBrowser)
     assert "Sections and styles" in view.toPlainText()
     win._manual.close()
+
+
+def test_a_note_saves_itself_into_the_library(win, tmp_path):
+    lib = tmp_path / "lib"
+    assert win.autosave() and not list(lib.glob("*.knote"))     # blank: no file
+    QTest.keyClicks(win.editor, "first words")
+    assert win.autosave()
+    files = list(lib.glob("*.knote"))
+    assert len(files) == 1 and files[0].stem.startswith("Note ")
+    win.header.title.setText("XPS training")
+    win._header_changed()
+    win.autosave()
+    assert [f.name for f in lib.glob("*.knote")] == ["XPS training.knote"]
+    assert win.library.tree.topLevelItem(0).text(0) == "XPS training"
+
+
+def test_new_note_goes_into_the_chosen_folder_and_switching_saves(win, tmp_path):
+    from khervenote import library
+    folder = library.make_folder(tmp_path / "lib", "Physics")
+    QTest.keyClicks(win.editor, "note one")
+    win.new_note(folder)
+    QTest.keyClicks(win.editor, "note two")
+    win.autosave()
+    assert win.path.parent == folder
+    assert len(list((tmp_path / "lib").rglob("*.knote"))) == 2
+    first = next(p for p in (tmp_path / "lib").glob("*.knote"))
+    win._open_from_library(first)
+    assert win.editor.toPlainText() == "note one"
+
+
+def test_moving_and_trashing_the_open_note(win, tmp_path):
+    from khervenote import library
+    QTest.keyClicks(win.editor, "x")
+    win.autosave()
+    old = win.path
+    folder = library.make_folder(tmp_path / "lib", "Sub")
+    new = library.move(old, folder)
+    win._moved(old, new)
+    assert win.path == new
+    QTest.keyClicks(win.editor, "y")
+    win.autosave()
+    assert new.exists() and not old.exists()
+    new.unlink()
+    win._trashed(new)
+    assert win.path is None and win.editor.toPlainText() == ""
+    assert win.autosave() and not new.exists()
+
+
+def test_date_picker_sets_the_date(win):
+    from PySide6.QtCore import QDate
+    win.header._pick_date(QDate(2026, 3, 14))
+    assert win.header.date.text() == "14 March 2026"
+    assert win.header._current_date() == QDate(2026, 3, 14)

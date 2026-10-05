@@ -276,6 +276,21 @@ def _arrow(mirror: bool) -> QIcon:
     return _done(px, p)
 
 
+def calendar() -> QIcon:
+    px, p = _canvas()
+    p.setPen(_pen(_fg(), 1.5))
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(QRectF(3.5, 5, 17, 15.5), 2, 2)
+    p.drawLine(QPointF(3.5, 9.5), QPointF(20.5, 9.5))
+    p.drawLine(QPointF(8, 3), QPointF(8, 7))
+    p.drawLine(QPointF(16, 3), QPointF(16, 7))
+    p.setPen(Qt.NoPen)
+    p.setBrush(_accent())
+    for x, y in ((7, 12), (11, 12), (15, 12), (7, 16), (11, 16)):
+        p.drawRect(QRectF(x, y, 2.4, 2.4))
+    return _done(px, p)
+
+
 def undo() -> QIcon:
     return _arrow(False)
 

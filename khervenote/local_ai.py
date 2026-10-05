@@ -95,7 +95,18 @@ def rephrase(model: str, text: str) -> str:
     return chat(model, REPHRASE, text)
 
 
+#: General-purpose families, best first, for when the user has not
+#: picked a model.  Anything else (custom models with their own system
+#: prompt, e.g. an XPS assistant built for KherveFitting) is used only
+#: when nothing general is installed.
+_GENERAL = ("qwen", "llama", "gemma", "mistral", "phi", "granite", "deepseek")
+
+
 def pick_default(models: list[str], preferred: str = "") -> str:
     if preferred in models:
         return preferred
+    for family in _GENERAL:
+        for name in models:
+            if name.lower().startswith(family):
+                return name
     return models[0] if models else ""

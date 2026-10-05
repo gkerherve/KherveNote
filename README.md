@@ -13,12 +13,15 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
 The full **[user manual](khervenote/manual.md)** is also in the app:
 *Help ▸ User manual* (F1).
 
+- **Notes panel** (left): every note, in folders you arrange by dragging,
+  with a search box that looks inside the notes. Notes save themselves
+  into *Documents ▸ KherveNote*; the open note lists its sections.
 - Write straight onto the page — it is one endless sheet, no page edges.
   Each paragraph shows the time in the session it was written.
 - **Styles** (the picker in the toolbar, or Ctrl+0 / 1 / 2 / 3): Text,
   Section, Subsection, Sub-subsection, Key point (Ctrl+Shift+K), Question
-  (Ctrl+Shift+Q), Transcript. Ctrl+Return starts a new section. The
-  *Sections* panel jumps to any heading.
+  (Ctrl+Shift+Q), Transcript. Ctrl+Return starts a new section. Title,
+  speaker, date (with a calendar) and place sit at the top.
 - **Bold / italic / underline**: Ctrl+B / I / U.
 - **Lists**: type `- ` for a bullet or `1. ` for a numbered item (or use
   the toolbar buttons). **Tab** makes a sub-item — numbered sub-items
@@ -55,7 +58,7 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
 - **Export PDF** (Ctrl+E) — continuous page by default, A4 under
   *Export ▸ A4 pages*. **Export LaTeX** writes a standalone `.tex` and
   its `assets/` folder.
-- Notes are saved as `.knote` files (a zip of the note and its images).
+- Notes are `.knote` files (a zip of the note, its images and recordings).
 
 ## Coming next
 

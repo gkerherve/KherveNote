@@ -73,4 +73,7 @@ def test_host_from_environment(monkeypatch):
 def test_pick_default():
     assert local_ai.pick_default(["a", "b"], "b") == "b"
     assert local_ai.pick_default(["a", "b"], "gone") == "a"
+    installed = ["granite4:micro-h", "qwen3.5:4b", "xps-expert-fast:latest"]
+    assert local_ai.pick_default(installed) == "qwen3.5:4b"
+    assert local_ai.pick_default(["xps-expert:latest"]) == "xps-expert:latest"
     assert local_ai.pick_default([], "x") == ""

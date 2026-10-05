@@ -52,7 +52,7 @@ _MARKER_RE = re.compile(r"\s*([-*•]|\d{1,3}[.)])")
 _OBJ = "￼"           # where an image sits in block text
 _LINE_SEP = " "      # Shift+Enter inside a paragraph
 MAX_COLUMN = 780
-GUTTER = 64
+GUTTER = 78
 
 
 class BlockMeta(QTextBlockUserData):

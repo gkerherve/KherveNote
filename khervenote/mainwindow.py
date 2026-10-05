@@ -1,9 +1,10 @@
 # KherveNote — main window
 # Copyright (C) 2026  Gwilherm Kerherve
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Main window: toolbar, outline, the note header and the endless page."""
+"""Main window: toolbar, the Notes library, the note header and the endless page."""
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -14,19 +15,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, QEvent, QObject, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction, QActionGroup, QDesktopServices, QImage, QKeySequence, QTextCursor,
 )
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDockWidget, QFileDialog, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QCalendarWidget, QComboBox, QDockWidget, QFileDialog, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from . import __version__, compiler, icons, local_ai, theme
+from . import __version__, compiler, icons, library, local_ai, theme
 from .editor import STYLES, NoteEditor, document_to_note, load_note
 from .knote_file import EXTENSION, load_knote, save_knote
+from .library_panel import LibraryPanel
 from .model import Note
 from .audio import input_devices
 from .model import Recording
@@ -74,6 +76,23 @@ class NoteHeader(QFrame):
         for w, ph in ((self.speaker, "Speaker"), (self.date, "Date"), (self.place, "Place")):
             w.setPlaceholderText(ph)
             row.addWidget(w)
+            if w is self.date:
+                self.date_button = QToolButton()
+                self.date_button.setToolTip("Pick the date on a calendar")
+                self.date_button.setAutoRaise(True)
+                self.date_button.setPopupMode(QToolButton.InstantPopup)
+                self.date_button.setStyleSheet("QToolButton::menu-indicator{image:none;}")
+                calendar = QCalendarWidget()
+                calendar.setGridVisible(True)
+                calendar.clicked.connect(self._pick_date)
+                menu = QMenu(self.date_button)
+                act = QWidgetAction(menu)
+                act.setDefaultWidget(calendar)
+                menu.addAction(act)
+                menu.aboutToShow.connect(lambda c=calendar: c.setSelectedDate(self._current_date()))
+                self.date_button.setMenu(menu)
+                self._calendar = calendar
+                row.addWidget(self.date_button)
         self.summary = QTextEdit()
         self.summary.setAcceptRichText(False)
         self.summary.setPlaceholderText("Summary")
@@ -88,6 +107,20 @@ class NoteHeader(QFrame):
         col.addWidget(self.title)
         col.addLayout(row)
         col.addWidget(self.summary)
+
+    def _current_date(self) -> QDate:
+        for fmt in ("%d %B %Y", "%d %b %Y", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                d = datetime.strptime(self.date.text().strip(), fmt)
+                return QDate(d.year, d.month, d.day)
+            except ValueError:
+                continue
+        return QDate.currentDate()
+
+    def _pick_date(self, date: QDate) -> None:
+        self.date.setText(datetime(date.year(), date.month(), date.day()).strftime("%d %B %Y"))
+        self.date_button.menu().hide()
+        self.changed.emit()
 
     def set_column(self, left: int, right: int) -> None:
         self._col.setContentsMargins(left, 14, right, 4)
@@ -108,6 +141,7 @@ class NoteHeader(QFrame):
             f" border:none; border-left:3px solid {theme.hex_('accent')};}}")
         for w in (self.speaker, self.date, self.place):
             w.setStyleSheet(f"color:{muted};")
+        self.date_button.setIcon(icons.calendar())
 
     def load(self, note: Note) -> None:
         m = note.meta
@@ -148,6 +182,9 @@ class Page(QWidget):
         self.header.set_column(m.left() + margin, m.right() + margin)
 
 
+_AUTO_NAME = re.compile(r"^Note \d{4}-\d\d-\d\d \d\d\.\d\d( \(\d+\))?$")
+
+
 class _Signals(QObject):
     done = Signal(object)
 
@@ -169,7 +206,9 @@ class MainWindow(QMainWindow):
         self.editor = NoteEditor(lambda: self.note.elapsed())
         self.editor.work_dir = self.work_dir
         self.editor.document().modificationChanged.connect(lambda *_: self._update_title())
-        self.editor.outline_changed.connect(self._refresh_outline)
+        self.editor.outline_changed.connect(
+            lambda: self.library.set_sections(self.editor.headings()))
+        self.editor.document().contentsChanged.connect(self._schedule_autosave)
         self.editor.style_at_cursor.connect(self._show_style)
         self.editor.image_pasted.connect(self._add_image)
         self.editor.ai_requested.connect(self.run_ai)
@@ -179,13 +218,20 @@ class MainWindow(QMainWindow):
         self.header.changed.connect(self._header_changed)
         self.setCentralWidget(Page(self.header, self.editor))
 
-        self.outline = QListWidget()
-        self.outline.itemClicked.connect(
-            lambda item: self.editor.go_to_block(item.data(Qt.UserRole)))
-        dock = QDockWidget("Sections", self)
-        dock.setObjectName("outline")
-        dock.setWidget(self.outline)
+        self.library = LibraryPanel(Path(self.settings.value(
+            "library/root", str(library.default_root()))))
+        self.library.open_note.connect(self._open_from_library)
+        self.library.new_note.connect(self.new_note)
+        self.library.go_to_section.connect(self.editor.go_to_block)
+        self.library.moved.connect(self._moved)
+        self.library.trashed.connect(self._trashed)
+        dock = QDockWidget("Notes", self)
+        dock.setObjectName("notes")
+        dock.setWidget(self.library)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self._new_note_folder: Optional[Path] = None
+        self._autosave_timer = QTimer(self, singleShot=True, interval=2000)
+        self._autosave_timer.timeout.connect(self.autosave)
 
         self.listen_label = QLabel()
         self.meter = QProgressBar()
@@ -211,8 +257,11 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._apply_theme()
         QApplication.styleHints().colorSchemeChanged.connect(lambda *_: self._apply_theme())
+        last = Path(self.settings.value("library/last", "") or "/nonexistent")
         if path:
             self.open_path(Path(path))
+        elif last.is_file():
+            self.open_path(last)
         else:
             self._set_note(Note.new())
 
@@ -320,6 +369,9 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(self.act_pdf)
         m.addAction(self.act_tex)
+        m.addSeparator()
+        m.addAction(A("Notes &folder…", self.choose_library, None,
+                      "Where all notes are kept (the Notes panel shows this folder)"))
         m.addSeparator()
         m.addAction(A("&Quit", self.close, QKeySequence.Quit))
         m = mb.addMenu("&Edit")
@@ -444,7 +496,10 @@ class MainWindow(QMainWindow):
         current = local_ai.pick_default(models, self.settings.value("ai/ollama_model", ""))
         group = QActionGroup(menu)
         for name in models:
-            a = menu.addAction(name)
+            # Custom models carry their own instructions; say what they are.
+            label = name + ("   — XPS assistant made for KherveFitting, not for notes"
+                            if name.startswith("xps-expert") else "")
+            a = menu.addAction(label)
             a.setCheckable(True)
             a.setChecked(name == current)
             a.triggered.connect(lambda _=False, n=name: self.settings.setValue("ai/ollama_model", n))
@@ -566,6 +621,9 @@ class MainWindow(QMainWindow):
         load_note(self.editor, note)
         self._header_dirty = False
         self._update_title()
+        self.library.set_current(path, self.editor.headings())
+        if path is not None:
+            self.settings.setValue("library/last", str(path))
         self.editor.setFocus()
 
     def _sync_note(self) -> Note:
@@ -585,21 +643,15 @@ class MainWindow(QMainWindow):
     def _header_changed(self) -> None:
         self._header_dirty = True
         self._update_title()
+        self._schedule_autosave()
+
+    def _schedule_autosave(self) -> None:
+        if self.dirty:
+            self._autosave_timer.start()
 
     def _update_title(self) -> None:
         name = self.path.name if self.path else "Untitled"
         self.setWindowTitle(f"KherveNote v{self._version} — {name}{' •' if self.dirty else ''}")
-
-    def _refresh_outline(self) -> None:
-        self.outline.clear()
-        for level, title, number in self.editor.headings():
-            item = QListWidgetItem("    " * (level - 1) + (title or "Untitled section"))
-            item.setData(Qt.UserRole, number)
-            if level == 1:
-                f = item.font()
-                f.setBold(True)
-                item.setFont(f)
-            self.outline.addItem(item)
 
     def _show_style(self, kind: str, level: int) -> None:
         for i, (_, k, lv) in enumerate(STYLES):
@@ -805,13 +857,33 @@ class MainWindow(QMainWindow):
 
     # ── files ──────────────────────────────────────────────────────
 
-    def _confirm_discard(self) -> bool:
+    # Notes save themselves: a couple of seconds after a change, and
+    # before another note is opened or the window closes.  A new note
+    # gets its file in the library once it has something in it.
+
+    def _is_blank(self) -> bool:
+        return (not self.header.title.text().strip() and not self.note.recordings
+                and not self.editor.document().toPlainText().strip()
+                and not self.header.summary.toPlainText().strip())
+
+    def autosave(self) -> bool:
+        self._autosave_timer.stop()
         if not self.dirty:
             return True
-        r = QMessageBox.question(self, "KherveNote", "Save changes to this note?",
-                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-        if r == QMessageBox.Save:
-            return self.save()
+        if self.path is None:
+            if self._is_blank():
+                return True
+            folder = self._new_note_folder or self.library.root
+            self.path = library.new_note_path(folder, self.header.title.text())
+        return self.save()
+
+    def _flush(self) -> bool:
+        """Save the open note before leaving it; False to stay."""
+        if self.autosave():
+            return True
+        r = QMessageBox.question(self, "KherveNote",
+                                 "This note could not be saved. Leave it anyway?",
+                                 QMessageBox.Discard | QMessageBox.Cancel)
         return r == QMessageBox.Discard
 
     def _fresh_work_dir(self) -> None:
@@ -819,21 +891,28 @@ class MainWindow(QMainWindow):
         self._tmp = tempfile.TemporaryDirectory(prefix="khervenote-")
         self.work_dir = Path(self._tmp.name)
 
-    def new_note(self) -> None:
-        if self._confirm_discard():
-            self._fresh_work_dir()
-            self._set_note(Note.new())
+    def new_note(self, folder: Optional[Path] = None) -> None:
+        if not self._flush():
+            return
+        self._fresh_work_dir()
+        self._new_note_folder = Path(folder) if folder else self.library.selected_folder()
+        self._set_note(Note.new())
+        self.header.title.setFocus()
 
     def _last_dir(self) -> str:
         return self.settings.value("files/last_dir", str(Path.home() / "Documents"))
 
     def open_dialog(self) -> None:
-        if not self._confirm_discard():
+        if not self._flush():
             return
         fn, _ = QFileDialog.getOpenFileName(self, "Open note", self._last_dir(),
                                             f"KherveNote (*{EXTENSION})")
         if fn:
             self.open_path(Path(fn))
+
+    def _open_from_library(self, path: Path) -> None:
+        if path != self.path and self._flush():
+            self.open_path(path)
 
     def open_path(self, path: Path) -> None:
         self._fresh_work_dir()
@@ -848,15 +927,57 @@ class MainWindow(QMainWindow):
 
     def save(self) -> bool:
         if self.path is None:
-            return self.save_as()
+            self.path = library.new_note_path(self._new_note_folder or self.library.root,
+                                              self.header.title.text())
         try:
             save_knote(self._sync_note(), self.path, self.work_dir)
         except OSError as exc:
             QMessageBox.warning(self, "KherveNote", f"Could not save:\n{exc}")
             return False
+        self._name_after_title()
         self._mark_clean()
-        self.statusBar().showMessage(f"Saved {self.path.name}", 3000)
+        self.settings.setValue("library/last", str(self.path))
+        self.library.set_current(self.path, self.editor.headings())
+        self.statusBar().showMessage(f"Saved {self.path.name}", 2000)
         return True
+
+    def _name_after_title(self) -> None:
+        """A note first saved before it had a title is called "Note <date>";
+        once it has one, the file takes its name."""
+        title = self.header.title.text().strip()
+        if title and _AUTO_NAME.match(self.path.stem):
+            try:
+                self.path = library.rename(self.path, title)
+            except OSError:
+                pass
+
+    def _moved(self, old: Path, new: Path) -> None:
+        if self.path is None:
+            return
+        if self.path == old:
+            self.path = new
+        elif old in self.path.parents:
+            self.path = new / self.path.relative_to(old)
+        else:
+            return
+        self.settings.setValue("library/last", str(self.path))
+        self.library.current = self.path
+        self._update_title()
+
+    def _trashed(self, path: Path) -> None:
+        if self.path is not None and (self.path == path or path in self.path.parents):
+            # Its file is gone: do not save it back.
+            self.path = None
+            self._mark_clean()
+            self._fresh_work_dir()
+            self._set_note(Note.new())
+
+    def choose_library(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Folder for all notes",
+                                                  str(self.library.root))
+        if folder and self._flush():
+            self.settings.setValue("library/root", folder)
+            self.library.set_root(Path(folder))
 
     def _suggested_name(self, suffix: str) -> str:
         base = self.path.stem if self.path else (self.header.title.text().strip() or "Notes")
@@ -978,7 +1099,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         if self.session is not None:
             self._stop_listening()
-        if self._confirm_discard():
+        if self._flush():
             self._tmp.cleanup()
             event.accept()
         else:
