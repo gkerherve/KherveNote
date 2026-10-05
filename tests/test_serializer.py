@@ -227,3 +227,35 @@ def test_transcript_appendix_compiles(tmp_path):
     n.transcript = [Segment(i * 7.0, f"sentence number {i} about photoemission") for i in range(40)]
     res = compiler.compile_tex(to_latex(n, transcript=True), tmp_path)
     assert res.ok, res.log
+
+
+def test_maths_is_kept_and_symbols_are_drawn():
+    from khervenote.serializer import tex
+    assert tex(r"so $E = h\nu - \phi$ here") == r"so $E = h\nu - \phi$ here"
+    assert tex("it costs $5 and $10") == r"it costs \$5 and \$10"
+    assert tex(r"$$\frac{1}{2}mv^2$$") == r"\[\frac{1}{2}mv^2\]"
+    assert tex(r"\[a=b\] and \(c_1\)") == r"\[a=b\] and $c_1$"
+    assert tex("λ ≈ 1.54 Å, 50%") == r"\ensuremath{\lambda} \ensuremath{\approx} 1.54 Å, 50\%"
+    assert tex("$x_λ$") == r"$x_\lambda $"
+
+
+@needs_tectonic
+def test_maths_and_symbols_compile(tmp_path):
+    n = Note.new()
+    n.add_section(r"Bragg's law: $n\lambda = 2d\sin\theta$")
+    n.add_block("typed", r"The rate is $r = k[A]^m[B]^n$ and $$k = A\exp\left(-\frac{E_a}{RT}\right)$$")
+    n.add_block("item", r"Energy levels $E_n = \frac{n^2 h^2}{8 m L^2}$, λ ≈ 1.54 Å → ∞")
+    n.add_block("important", "ΔG = ΔH − TΔS ≤ 0 for a spontaneous change")
+    res = compiler.compile_tex(to_latex(n), tmp_path)
+    assert res.ok, res.log
+    import pymupdf
+    with pymupdf.open(res.pdf_path) as doc:
+        text = doc[0].get_text()
+    assert "1.54" in text and "Å" in text
+
+
+def test_unicode_sub_and_superscripts():
+    from khervenote.serializer import tex
+    assert tex("H₂O, Al³⁺, cm⁻¹, Eₙ") == (r"H\textsubscript{2}O, Al\textsuperscript{3+}, "
+                                         r"cm\textsuperscript{-1}, E\textsubscript{n}")
+    assert tex(r"$2\theta = 43.3°$") == r"$2\theta = 43.3^{\circ}$"

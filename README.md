@@ -22,7 +22,13 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   Section, Subsection, Sub-subsection, Key point (Ctrl+Shift+K), Question
   (Ctrl+Shift+Q), Transcript. Ctrl+Return starts a new section. Title,
   speaker, date (with a calendar) and place sit at the top.
-- **Bold / italic / underline**: Ctrl+B / I / U.
+- **Bold / italic / underline**: Ctrl+B / I / U. **Equations** as in
+  LaTeX — `$…$` in a sentence, `$$…$$` on their own line — become real
+  maths in the PDF; Greek letters, symbols and H₂O-style sub/superscripts
+  print correctly too.
+- **Example notes** (*Help ▸ Example notes*): eight worked lectures for
+  scientists — maths, physics, chemistry and four in materials science —
+  with equations and the speech beside them.
 - **Lists**: type `- ` for a bullet or `1. ` for a numbered item (or use
   the toolbar buttons). **Tab** makes a sub-item — numbered sub-items
   export as 1.1, 1.2, 1.2.1 — Shift+Tab goes back, Enter on an empty item

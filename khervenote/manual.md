@@ -99,6 +99,26 @@ Press Return after a heading and you are back to ordinary text.
   the list. Numbered sub-items come out as 1.1, 1.2, 1.2.1 in the PDF.
 - **Shift+Return** starts a new line inside the same paragraph.
 
+**Equations** are written as in LaTeX and come out as real maths in the
+PDF:
+
+- in a sentence: `$E = h\nu - \phi$`, or `\(k_1\)`
+- on a line of their own: `$$k = A\exp(-E_a/RT)$$`, or `\[ … \]`
+- a `$` followed by a space (“it costs $5”) stays a dollar sign.
+
+On the page you see what you typed; the PDF shows the equation. Greek
+letters and symbols typed directly (λ, ΔH, ≈, →, °) and sub- and
+superscripts (H₂O, Al³⁺, cm⁻¹) also print correctly.
+
+**Example notes** — *Help ▸ Example notes* puts eight worked lecture
+notes into an *Examples* folder of the Notes panel: linear algebra,
+quantum mechanics, thermodynamics, reaction kinetics, XPS, X-ray
+diffraction, solid electrolytes for batteries and mechanical properties
+of metals. Each has sections, lists, key points, questions, equations
+and the speech that was heard beside it — try *Fill in my section*,
+the summaries or *Export PDF* on them. Editing them is safe: they are
+never written over.
+
 ## 5. Listening — the speech beside your notes
 
 Press **Listen** (in the toolbar, at the top of the **Speech** panel on

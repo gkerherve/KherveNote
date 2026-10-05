@@ -50,9 +50,78 @@ _SPECIALS_RE = re.compile(r"[&%$#_{}~^\\]")
 _TIGHT = r"\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}"
 
 
+#: Characters the text font (Latin Modern) has no glyph for — they would
+#: come out blank — and the maths command that draws them.
+_SYMBOLS = {
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta", "ε": r"\varepsilon",
+    "ζ": r"\zeta", "η": r"\eta", "θ": r"\theta", "ι": r"\iota", "κ": r"\kappa",
+    "λ": r"\lambda", "μ": r"\mu", "ν": r"\nu", "ξ": r"\xi", "π": r"\pi", "ρ": r"\rho",
+    "σ": r"\sigma", "τ": r"\tau", "υ": r"\upsilon", "φ": r"\phi", "χ": r"\chi",
+    "ψ": r"\psi", "ω": r"\omega", "Γ": r"\Gamma", "Δ": r"\Delta", "Θ": r"\Theta",
+    "Λ": r"\Lambda", "Ξ": r"\Xi", "Π": r"\Pi", "Σ": r"\Sigma", "Φ": r"\Phi",
+    "Ψ": r"\Psi", "Ω": r"\Omega", "∆": r"\Delta", "≈": r"\approx", "≤": r"\leq",
+    "≥": r"\geq", "≠": r"\neq", "→": r"\rightarrow", "←": r"\leftarrow",
+    "↔": r"\leftrightarrow", "⇒": r"\Rightarrow", "⇌": r"\rightleftharpoons",
+    "∞": r"\infty", "∝": r"\propto", "∂": r"\partial", "∇": r"\nabla", "∫": r"\int",
+    "∑": r"\sum", "√": r"\surd", "·": r"\cdot", "∼": r"\sim", "≡": r"\equiv",
+    "⊥": r"\perp", "∥": r"\parallel", "ℏ": r"\hbar", "−": "-",
+}
+_SYMBOLS_RE = re.compile("|".join(map(re.escape, _SYMBOLS)))
+
+
+_SUB = dict(zip("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜ", "0123456789+-=()aeoxhklmnpst"))
+_SUP = dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ", "0123456789+-=()ni"))
+_SUB_RE = re.compile("[" + "".join(_SUB) + "]+")
+_SUP_RE = re.compile("[" + "".join(_SUP) + "]+")
+
+
 def escape(text: str) -> str:
-    """Make plain text safe to typeset."""
-    return _SPECIALS_RE.sub(lambda m: _SPECIALS[m.group()], text)
+    """Make plain text safe to typeset.  Unicode sub- and superscripts
+    (H₂O, Al³⁺, cm⁻¹) become real ones: the text font has no glyphs for
+    most of them."""
+    out = _SPECIALS_RE.sub(lambda m: _SPECIALS[m.group()], text)
+    out = _SUB_RE.sub(lambda m: r"\textsubscript{" + "".join(_SUB[c] for c in m.group())
+                      + "}", out)
+    out = _SUP_RE.sub(lambda m: r"\textsuperscript{" + "".join(_SUP[c] for c in m.group())
+                      + "}", out)
+    return _SYMBOLS_RE.sub(lambda m: r"\ensuremath{" + _SYMBOLS[m.group()] + "}", out)
+
+
+#: Maths as people type it in notes, LaTeX-style: $$…$$ and \[…\] on their
+#: own, $…$ and \(…\) in a sentence.  A $ only opens maths when followed by
+#: a non-space and only closes it after a non-space and before a non-digit,
+#: so "it costs $5 and $10" stays text.
+_MATH_RE = re.compile(
+    r"\$\$(?P<dd>.+?)\$\$"
+    r"|\\\[(?P<db>.+?)\\\]"
+    r"|\\\((?P<ib>.+?)\\\)"
+    r"|\$(?P<id>[^\s$](?:[^$]*?[^\s$])?)\$(?!\d)", re.DOTALL)
+
+
+_MATH_ONLY = {"°": r"^{\circ}", "×": r"\times ", "±": r"\pm ", "µ": r"\mu "}
+
+
+def _math(src: str) -> str:
+    # Greek letters and symbols typed straight into maths still need
+    # commands — the maths fonts have none of them.
+    for ch, cmd in _MATH_ONLY.items():
+        src = src.replace(ch, cmd)
+    return _SYMBOLS_RE.sub(lambda m: _SYMBOLS[m.group()] + " ", src)
+
+
+def tex(text: str) -> str:
+    """Text with any maths in it kept as maths and the rest escaped."""
+    out, pos = [], 0
+    for m in _MATH_RE.finditer(text):
+        out.append(escape(text[pos:m.start()]))
+        display = m.group("dd") or m.group("db")
+        if display is not None:
+            out.append(r"\[" + _math(display.strip()) + r"\]")
+        else:
+            out.append("$" + _math((m.group("ib") or m.group("id")).strip()) + "$")
+        pos = m.end()
+    out.append(escape(text[pos:]))
+    return "".join(out)
 
 
 def format_time(t: Optional[float]) -> str:
@@ -87,7 +156,7 @@ def _render_list(lines: list[ListLine]) -> str:
 
 
 def _list_latex(lines: list[str]) -> str:
-    return _render_list([ListLine(ln.level, ln.numbered, escape(ln.text), ln.item)
+    return _render_list([ListLine(ln.level, ln.numbered, tex(ln.text), ln.item)
                          for ln in nest(lines)])
 
 
@@ -98,7 +167,7 @@ def rich_to_latex(text: str, marks: list) -> str:
     """Text with inline bold / italic / underline spans; newlines inside
     the text are line breaks."""
     def plain(seg: str) -> str:
-        return "\\newline\n".join(escape(x) for x in seg.split("\n"))
+        return "\\newline\n".join(tex(x) for x in seg.split("\n"))
     if not marks:
         return plain(text)
     cuts = sorted({0, len(text)} | {max(0, min(len(text), c)) for m in marks
@@ -132,7 +201,7 @@ def text_to_latex(text: str) -> str:
             if listed:
                 items.append(ln)
             elif ln:
-                lines.append(escape(ln.strip()))
+                lines.append(tex(ln.strip()))
         if parts:
             out.append("\n".join(parts))
     return "\n\n".join(out)
@@ -175,7 +244,7 @@ def _preamble(note: Note, layout: str, limit_pt: Optional[float]) -> str:
 
     return rf"""\documentclass[11pt]{{article}}
 \usepackage[{geometry}]{{geometry}}
-\usepackage{{xcolor,graphicx}}
+\usepackage{{amsmath,amssymb,xcolor,graphicx}}
 \usepackage[hypcap=false]{{caption}}
 \usepackage[hidelinks,bookmarksnumbered,bookmarksopen]{{hyperref}}
 \hypersetup{{pdftitle={{{escape(m.title)}}},pdfauthor={{{escape(m.speaker)}}},
@@ -207,7 +276,7 @@ def _title_band(note: Note) -> str:
     left = escape(m.speaker)
     right = " \\textperiodcentered{} ".join(escape(x) for x in (m.date, m.place) if x)
     parts = [r"{\color{knoteaccent}\rule{\linewidth}{1.5pt}}\par",
-             r"{\LARGE\bfseries " + (escape(m.title) or "Notes") + r"}\par"]
+             r"{\LARGE\bfseries " + (tex(m.title) or "Notes") + r"}\par"]
     if left or right:
         parts.append(r"{\large " + left + r"}\hfill{\color{knotemuted}" + right + r"}\par")
     parts.append(r"{\color{knoteaccent}\rule{\linewidth}{0.6pt}}\par")
@@ -223,7 +292,7 @@ def _image(block: Block, asset_dir: Optional[Path]) -> str:
     else:
         body = (r"\includegraphics[width=0.85\linewidth,height=110mm,"
                 r"keepaspectratio]{" + block.path + "}")
-    cap = (r"\captionof{figure}{" + escape(block.text.strip()) + "}"
+    cap = (r"\captionof{figure}{" + tex(block.text.strip()) + "}"
            if block.text.strip() else "")
     return "\\begin{center}\n" + body + "\n" + cap + "\n\\end{center}"
 
@@ -243,7 +312,7 @@ def _block(block: Block, show_times: bool, asset_dir: Optional[Path]) -> str:
     if block.kind == "attachment":
         return r"{\color{knotemuted}\textbf{Attached document:} " + escape(block.text) + "}"
     if block.kind == "heading":
-        title = escape(block.text.strip())
+        title = tex(block.text.strip())
         if not title:
             return ""
         return ("\\subsubsection{" if block.level >= 3 else "\\subsection{") + title + "}"
@@ -286,7 +355,7 @@ def _section(sec: Section, first: bool, show_times: bool,
         return ""
     parts = []
     if sec.title.strip() or not first:
-        parts.append(r"\section{" + (escape(sec.title.strip())
+        parts.append(r"\section{" + (tex(sec.title.strip())
                                      or "Untitled section") + "}")
     return "\n\n".join(parts + blocks)
 
@@ -294,7 +363,7 @@ def _section(sec: Section, first: bool, show_times: bool,
 def _transcript(note: Note) -> str:
     """The speech transcript as a last section, each stretch with the
     time it was said in the margin."""
-    rows = [r"\knotetime{" + note.time_label(g.t) + "}" + escape(g.text.strip())
+    rows = [r"\knotetime{" + note.time_label(g.t) + "}" + tex(g.text.strip())
             for g in note.transcript if g.text.strip()]
     if not rows:
         return ""

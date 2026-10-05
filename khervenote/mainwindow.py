@@ -157,6 +157,7 @@ class NoteHeader(QFrame):
         for w, v in ((self.title, m.title), (self.speaker, m.speaker),
                      (self.date, m.date), (self.place, m.place)):
             w.setText(v)
+            w.setCursorPosition(0)        # show a long title from its start
         self.summary.blockSignals(True)
         self.summary.setPlainText(note.summary)
         self.summary.blockSignals(False)
@@ -497,6 +498,9 @@ class MainWindow(QMainWindow):
             sub.addAction(a)
         m = mb.addMenu("&Help")
         m.addAction(self.act_manual)
+        m.addAction(A("&Example notes — maths, physics, chemistry, materials",
+                      self.install_examples, None,
+                      "Copy eight worked lecture notes into an Examples folder and open one"))
         m.addSeparator()
         m.addAction(A("&About KherveNote", self.about))
 
@@ -1647,6 +1651,19 @@ class MainWindow(QMainWindow):
         box.exec()
         if box.clickedButton() is setup:
             self.show_ai_setup()
+
+    def install_examples(self) -> None:
+        from . import examples
+        if not self._flush():
+            return
+        paths = examples.install(self.library.root)
+        self.library._expanded.add(str(self.library.root / examples.FOLDER))
+        self.library.refresh()
+        self.open_path(paths[0])
+        self.speech_dock.show()
+        self.statusBar().showMessage(
+            f"{len(paths)} example notes are in the “{examples.FOLDER}” folder of the Notes "
+            "panel — each has the speech that was heard beside it.", 10000)
 
     def show_ai_setup(self) -> None:
         from .ai_setup import AISetupDialog

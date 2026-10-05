@@ -346,3 +346,14 @@ def test_revise_keeps_text_that_changed_meanwhile(win):
 def test_directions_are_remembered(win):
     win.doc_panel.directions.setPlainText("In French, five bullets")
     assert win.settings.value("ai/directions") == "In French, five bullets"
+
+
+def test_example_notes_are_installed_and_listed(win, tmp_path):
+    from khervenote import examples
+    win.install_examples()
+    folder = tmp_path / "lib" / examples.FOLDER
+    assert len(list(folder.glob("*.knote"))) == len(examples.EXAMPLES)
+    assert win.path.parent == folder and win.note.transcript
+    assert "$" in win.editor.toPlainText()
+    labels = [i.text(0) for i in win.library._all_items()]
+    assert "Examples" in labels
