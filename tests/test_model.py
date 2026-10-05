@@ -78,3 +78,15 @@ def test_recordings_round_trip_and_count_as_assets():
     back = Note.from_dict(n.to_dict())
     assert back.recordings == n.recordings
     assert "assets/rec-1.ogg" in back.asset_paths()
+
+
+def test_plain_text_for_the_ai():
+    n = Note.new()
+    n.meta.title, n.meta.date = "XPS", ""
+    n.add_block("transcript", "hello all")
+    n.add_section("Sources")
+    n.add_block("item", "Al", numbered=True)
+    n.add_block("item", "line width", level=1)
+    n.add_block("important", "10 nm")
+    assert n.plain_text() == ("# XPS\n(said) hello all\n\n## Sources\n1. Al\n"
+                              "  - line width\nKey point: 10 nm\n")

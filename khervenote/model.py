@@ -225,6 +225,28 @@ class Note:
         return ([b.path for s in self.sections for b in s.blocks if b.path]
                 + [r.path for r in self.recordings])
 
+    def plain_text(self) -> str:
+        """The note as lightly marked-up text, for an AI to read."""
+        m = self.meta
+        lines = [f"# {m.title}" if m.title else "# Notes"]
+        lines += [x for x in (m.speaker, m.date, m.place) if x]
+        for sec in self.sections:
+            if sec.title:
+                lines += ["", f"## {sec.title}"]
+            for b in sec.blocks:
+                if b.kind == "heading":
+                    lines += ["", "#" * (b.level + 1) + " " + b.text]
+                elif b.kind == "item":
+                    marker = "1." if b.numbered else "-"
+                    lines.append("  " * b.level + f"{marker} {b.text}")
+                elif b.kind == "image":
+                    lines.append(f"[image{': ' + b.text if b.text else ''}]")
+                else:
+                    prefix = {"important": "Key point: ", "question": "Question: ",
+                              "transcript": "(said) "}.get(b.kind, "")
+                    lines.append(prefix + b.text)
+        return "\n".join(lines).strip() + "\n"
+
     # ── persistence ────────────────────────────────────────────────
 
     def to_dict(self) -> dict:

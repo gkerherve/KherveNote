@@ -18,10 +18,10 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeyS
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDockWidget, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPlainTextEdit, QProgressBar, QToolBar, QVBoxLayout, QWidget,
+    QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from . import __version__, compiler, icons, theme
+from . import __version__, compiler, icons, local_ai, theme
 from .editor import STYLES, NoteEditor, document_to_note, load_note
 from .knote_file import EXTENSION, load_knote, save_knote
 from .model import Note
@@ -71,10 +71,12 @@ class NoteHeader(QFrame):
         for w, ph in ((self.speaker, "Speaker"), (self.date, "Date"), (self.place, "Place")):
             w.setPlaceholderText(ph)
             row.addWidget(w)
-        self.summary = QPlainTextEdit()
+        self.summary = QTextEdit()
+        self.summary.setAcceptRichText(False)
         self.summary.setPlaceholderText("Summary")
-        self.summary.setFixedHeight(90)
+        self.summary.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.summary.setVisible(False)
+        self.summary.textChanged.connect(self._fit_summary)
         for w in (self.title, self.speaker, self.date, self.place):
             w.setFrame(False)
             w.textEdited.connect(self.changed)
@@ -86,13 +88,20 @@ class NoteHeader(QFrame):
 
     def set_column(self, left: int, right: int) -> None:
         self._col.setContentsMargins(left, 14, right, 4)
+        QTimer.singleShot(0, self._fit_summary)
+
+    def _fit_summary(self) -> None:
+        # Grow with the text rather than scroll inside the header.
+        doc = self.summary.document()
+        doc.setTextWidth(self.summary.viewport().width())
+        self.summary.setFixedHeight(min(300, int(doc.size().height()) + 6))
 
     def apply_theme(self) -> None:
         page, muted, text = theme.hex_("page"), theme.hex_("muted"), theme.hex_("text")
         self.setStyleSheet(
             f"#noteheader{{background:{page};}}"
             f"QLineEdit{{background:{page}; color:{text}; border:none;}}"
-            f"QPlainTextEdit{{background:{theme.hex_('button')}; color:{text};"
+            f"QTextEdit{{background:{theme.hex_('button')}; color:{text};"
             f" border:none; border-left:3px solid {theme.hex_('accent')};}}")
         for w in (self.speaker, self.date, self.place):
             w.setStyleSheet(f"color:{muted};")
@@ -160,6 +169,8 @@ class MainWindow(QMainWindow):
         self.editor.outline_changed.connect(self._refresh_outline)
         self.editor.style_at_cursor.connect(self._show_style)
         self.editor.image_pasted.connect(self._add_image)
+        self.editor.ai_requested.connect(self.run_ai)
+        self._ai_busy = False
         self.header = NoteHeader()
         self.header.changed.connect(self._header_changed)
         self.setCentralWidget(Page(self.header, self.editor))
@@ -295,6 +306,7 @@ class MainWindow(QMainWindow):
                   self.act_summary, self.act_clock):
             m.addSeparator() if a is None else m.addAction(a)
         self._build_speech_menu(mb.addMenu("&Speech"))
+        self._build_ai_menu(mb.addMenu("&AI"))
         m = mb.addMenu("&Export")
         m.addAction(self.act_continuous)
         m.addAction(self.act_paged)
@@ -317,6 +329,16 @@ class MainWindow(QMainWindow):
                   self.act_numbers, None, self.act_section, self.act_key, self.act_question,
                   self.act_image, self.act_camera, None, self.act_pdf, self.act_tex):
             tb.addSeparator() if a is None else tb.addAction(a)
+        ai_button = QToolButton()
+        ai_button.setPopupMode(QToolButton.InstantPopup)
+        ai_button.setToolTip("Local AI (Ollama): rephrase, summarise")
+        ai_menu = QMenu(ai_button)
+        for a in (self.act_rephrase, self.act_summarise, self.act_summarise_note):
+            ai_menu.addAction(a)
+        ai_button.setMenu(ai_menu)
+        tb.insertWidget(self.act_pdf, ai_button)
+        tb.insertSeparator(self.act_pdf)
+        self._ai_button = ai_button
         self.addToolBar(tb)
         self.toolbar = tb
 
@@ -344,6 +366,105 @@ class MainWindow(QMainWindow):
         self._mic_menu = menu.addMenu("M&icrophone")
         self._mic_menu.aboutToShow.connect(self._fill_mic_menu)
 
+    def _build_ai_menu(self, menu) -> None:
+        self.act_rephrase = self._action("&Rephrase paragraph / selection",
+                                         lambda: self.run_ai("rephrase"), "Ctrl+Shift+R",
+                                         "Rewrite as clear sentences with the local AI (Ollama)")
+        self.act_summarise = self._action("&Summarise section / selection",
+                                          lambda: self.run_ai("summarise"), "Ctrl+Alt+S",
+                                          "Key points of this section, by the local AI (Ollama)")
+        self.act_summarise_note = self._action("Summarise the whole &note",
+                                               lambda: self.run_ai("summarise_note"), None,
+                                               "Write the summary at the top of the note")
+        for a in (self.act_rephrase, self.act_summarise, self.act_summarise_note):
+            menu.addAction(a)
+        menu.addSeparator()
+        self._ai_model_menu = menu.addMenu("Local AI &model (Ollama)")
+        self._ai_model_menu.aboutToShow.connect(self._fill_ai_models)
+
+    def _fill_ai_models(self) -> None:
+        menu = self._ai_model_menu
+        menu.clear()
+        try:
+            models = local_ai.list_models()
+        except local_ai.OllamaError as exc:
+            a = menu.addAction(str(exc))
+            a.setEnabled(False)
+            return
+        if not models:
+            a = menu.addAction("No models — run `ollama pull qwen3.5:4b` (or another)")
+            a.setEnabled(False)
+            return
+        current = local_ai.pick_default(models, self.settings.value("ai/ollama_model", ""))
+        group = QActionGroup(menu)
+        for name in models:
+            a = menu.addAction(name)
+            a.setCheckable(True)
+            a.setChecked(name == current)
+            a.triggered.connect(lambda _=False, n=name: self.settings.setValue("ai/ollama_model", n))
+            group.addAction(a)
+
+    # ── local AI ───────────────────────────────────────────────────
+
+    def run_ai(self, action: str) -> None:
+        if self._ai_busy:
+            self.statusBar().showMessage("The local AI is still writing…", 4000)
+            return
+        ed = self.editor
+        if action == "rephrase":
+            cur = ed.paragraph_range()
+        elif action == "summarise":
+            cur = ed.section_range()
+        else:
+            cur = None
+        original = cur.selection().toPlainText() if cur is not None else ""
+        if cur is not None and not original.strip():
+            self.statusBar().showMessage("Nothing to work on here.", 4000)
+            return
+        text = original if cur is not None else self._sync_note().plain_text()
+        if action == "summarise" and not ed.textCursor().hasSelection() and ed.section_title():
+            text = f"Section: {ed.section_title()}\n\n{text}"
+        preferred = self.settings.value("ai/ollama_model", "")
+        job = {"rephrase": local_ai.rephrase, "summarise": local_ai.summarise,
+               "summarise_note": local_ai.summarise_note}[action]
+        signals = _Signals(self)
+        signals.done.connect(lambda res: self._ai_done(action, cur, original, res))
+        self._ai_busy = True
+        self.statusBar().showMessage("The local AI is writing…")
+
+        def work():
+            try:
+                model = local_ai.pick_default(local_ai.list_models(), preferred)
+                if not model:
+                    raise local_ai.OllamaError("Ollama has no models yet — "
+                                               "run `ollama pull qwen3.5:4b` (or another).")
+                signals.done.emit(("ok", job(model, text)))
+            except local_ai.OllamaError as exc:
+                signals.done.emit(("error", str(exc)))
+            except Exception as exc:  # noqa: BLE001 — surface anything to the user
+                signals.done.emit(("error", f"The local AI failed: {exc}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _ai_done(self, action: str, cur, original: str, result) -> None:
+        self._ai_busy = False
+        status, text = result
+        if status != "ok" or not text.strip():
+            self.statusBar().clearMessage()
+            QMessageBox.warning(self, "Local AI", text or "The local AI returned nothing.")
+            return
+        if action == "summarise_note":
+            self.header.summary.setPlainText(text.strip())
+            self.header.summary.setVisible(True)
+        elif cur.selection().toPlainText() != original:
+            # The text changed while the AI was writing (more speech, an
+            # edit): put the result next to it rather than overwrite.
+            self.editor.insert_summary_after(cur, text)
+        elif action == "rephrase":
+            self.editor.replace_range(cur, text)
+        else:
+            self.editor.insert_summary_after(cur, text)
+        self.statusBar().showMessage("Done — Ctrl+Z undoes it", 5000)
+
     def _fill_mic_menu(self) -> None:
         self._mic_menu.clear()
         group = QActionGroup(self._mic_menu)
@@ -366,6 +487,7 @@ class MainWindow(QMainWindow):
                         (self.act_pdf, icons.export_pdf()),
                         (self.act_tex, icons.export_tex())):
             a.setIcon(icon)
+        self._ai_button.setIcon(icons.sparkle())
 
     # ── theme ──────────────────────────────────────────────────────
 

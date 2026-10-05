@@ -29,6 +29,16 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
   (*Speech ▸ Model*: tiny … large; Small by default), then it works
   offline. *Speech ▸ Language* and *Speech ▸ Microphone* choose the rest.
   The recording is kept inside the `.knote`.
+- **Local AI** (Ollama, on this computer): right-click on the page, the
+  ✦ toolbar button or the *AI* menu —
+  - *Rephrase* (Ctrl+Shift+R) rewrites the paragraph or selection as
+    clear sentences; a rewritten transcript becomes your own text.
+  - *Summarise* (Ctrl+Alt+S) adds the key points of the section (or the
+    selection) as a key-point box.
+  - *Summarise the whole note* writes the summary at the top.
+  Pick the model under *AI ▸ Local AI model*. Ctrl+Z undoes any of them.
+  Needs [Ollama](https://ollama.com) running with at least one model
+  (e.g. `ollama pull qwen3.5:4b`).
 - **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
 - **Camera** (Ctrl+Shift+P): take a picture of a whiteboard, a slide or
   a handout with the computer's camera; Space takes it.
@@ -40,8 +50,7 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
 
 ## Coming next
 
-Summarise / rephrase with a local AI (Ollama), then Claude over MCP,
-automatic section detection, and import of existing Word / PDF /
+Claude over MCP, automatic section detection, and import of existing Word / PDF /
 PowerPoint notes. See `CLAUDE.md` for the roadmap.
 
 ## Running from source

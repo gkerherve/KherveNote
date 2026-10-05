@@ -236,6 +236,8 @@ class NoteEditor(QTextEdit):
     outline_changed = Signal()
     style_at_cursor = Signal(str, int)
     image_pasted = Signal(QImage)
+    #: "rephrase", "summarise" or "summarise_note" from the context menu.
+    ai_requested = Signal(str)
 
     def __init__(self, clock: Callable[[], Optional[float]], parent=None) -> None:
         super().__init__(parent)
@@ -521,6 +523,84 @@ class NoteEditor(QTextEdit):
                 cur.endEditBlock()
                 return
         super().keyPressEvent(event)
+
+    # local AI
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        if not self.textCursor().hasSelection():
+            self.setTextCursor(self.cursorForPosition(event.pos()))
+        menu = self.createStandardContextMenu(event.pos())
+        menu.addSeparator()
+        sel = self.textCursor().hasSelection()
+        menu.addAction("Rephrase with local AI" + ("" if sel else " (this paragraph)"),
+                       lambda: self.ai_requested.emit("rephrase"))
+        menu.addAction("Summarise with local AI" + ("" if sel else " (this section)"),
+                       lambda: self.ai_requested.emit("summarise"))
+        menu.addAction("Summarise the whole note with local AI",
+                       lambda: self.ai_requested.emit("summarise_note"))
+        menu.exec(event.globalPos())
+
+    def paragraph_range(self) -> QTextCursor:
+        """The selection, or the paragraph under the cursor."""
+        cur = QTextCursor(self.textCursor())
+        if not cur.hasSelection():
+            cur.movePosition(QTextCursor.StartOfBlock)
+            cur.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        return cur
+
+    def section_range(self) -> QTextCursor:
+        """The selection, or the body of the section the cursor is in
+        (after its heading, up to the next section)."""
+        cur = QTextCursor(self.textCursor())
+        if cur.hasSelection():
+            return cur
+        block = cur.block()
+        start = block
+        while start.isValid() and block_kind(start) != ("heading", 1):
+            start = start.previous()
+        first = start.next() if start.isValid() else self.document().begin()
+        end = first
+        while end.next().isValid() and block_kind(end.next()) != ("heading", 1):
+            end = end.next()
+        cur.setPosition(first.position())
+        cur.setPosition(end.position() + end.length() - 1, QTextCursor.KeepAnchor)
+        return cur
+
+    def section_title(self) -> str:
+        block = self.textCursor().block()
+        while block.isValid():
+            if block_kind(block) == ("heading", 1):
+                return block.text().strip()
+            block = block.previous()
+        return ""
+
+    def replace_range(self, cur: QTextCursor, text: str) -> None:
+        """Put *text* where *cur* selects, as the user's own text: what
+        the microphone wrote becomes ordinary paragraphs once rewritten."""
+        cur.beginEditBlock()
+        start = cur.selectionStart()
+        cur.insertText(text.strip())
+        end = cur.position()
+        block = self.document().findBlock(start)
+        while block.isValid() and block.position() <= end:
+            if block_kind(block)[0] == "transcript":
+                apply_style(block, "typed")
+            block = block.next()
+        cur.endEditBlock()
+
+    def insert_summary_after(self, cur: QTextCursor, text: str) -> None:
+        """A key-point paragraph holding *text*, after the range *cur*."""
+        at = QTextCursor(self.document())
+        at.setPosition(cur.selectionEnd())
+        at.beginEditBlock()
+        at.movePosition(QTextCursor.EndOfBlock)
+        at.insertBlock(QTextBlockFormat(), QTextCharFormat())
+        set_list(at.block(), None)
+        apply_style(at.block(), "important")
+        at.block().setUserData(BlockMeta(self.clock()))
+        at.insertText(text.strip().replace("\n", _LINE_SEP))
+        at.endEditBlock()
+        self.setTextCursor(at)
 
     # paste
 

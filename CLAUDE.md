@@ -86,12 +86,16 @@ stack. Consequences that must hold for anything added to the template:
 | Editor | Write directly on one endless page, headings, B/I/U, themes | done (0.3) |
 | Camera | Take a picture with the computer's camera | done (0.4) |
 | Listen | Microphone + **offline Whisper** (faster-whisper) writing into the page | done (0.5) |
-| Local AI | Right-click Summarise / Rephrase with **Ollama** | 0.6 |
+| Local AI | Right-click Summarise / Rephrase with **Ollama** | done (0.6) |
 | Claude | MCP server/bridge (from KherveTeX `mcp_*.py`), "Summarise with Claude" | later |
 | Sections | Section suggestions: silence + cue phrases, then semantic | later |
 | Import | Word / PDF / PowerPoint notes → a proper document | later |
 | Links | Open in KherveTeX, KherveRef citations | later |
 | Release | Installers with tectonic, warmed cache and a Whisper model | later |
+
+The local AI (`local_ai.py`) talks to Ollama over plain HTTP
+(`OLLAMA_HOST`, default `localhost:11434`) and sends `think: false` so
+reasoning models answer in seconds; it must never need a cloud key.
 
 Transcription stays **offline** (user decision, 2026-10-05): audio never
 leaves the machine.
