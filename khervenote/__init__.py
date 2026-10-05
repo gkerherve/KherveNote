@@ -3,4 +3,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """KherveNote: listen, take notes on one continuous page, export to PDF."""
 
-__version__ = "0.6"
+__version__ = "0.7"

@@ -97,5 +97,12 @@ The local AI (`local_ai.py`) talks to Ollama over plain HTTP
 (`OLLAMA_HOST`, default `localhost:11434`) and sends `think: false` so
 reasoning models answer in seconds; it must never need a cloud key.
 
+Microphone and camera permission (`permissions.py`): the macOS app
+bundle's Info.plist **must** carry `NSMicrophoneUsageDescription` and
+`NSCameraUsageDescription`, or Qt refuses both at once. Run from
+source, Qt's permission API is skipped — macOS asks on behalf of the
+terminal / IDE — and a microphone that only sends zeros (the way macOS
+blocks it) is reported after 5 s.
+
 Transcription stays **offline** (user decision, 2026-10-05): audio never
 leaves the machine.

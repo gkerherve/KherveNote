@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -604,7 +605,8 @@ class MainWindow(QMainWindow):
                                      self.settings.value("speech/language", ""), device, self,
                                      engine=self._engine[1] if self._engine else None)
         self.session.text.connect(self.editor.append_transcript)
-        self.session.level.connect(lambda v: self.meter.setValue(min(100, int(v * 400))))
+        self.session.level.connect(self._on_level)
+        self._loudest = 0.0
         self.session.status.connect(lambda m: self.statusBar().showMessage(m, 6000))
         self.session.failed.connect(self._listen_failed)
         self.session.finished.connect(lambda s=self.session, m=model: self._session_done(s, m))
@@ -615,6 +617,25 @@ class MainWindow(QMainWindow):
         self.listen_label.setText("\u25cf Listening")
         self.listen_label.setStyleSheet(f"color:{theme.hex_('red')}; font-weight:bold;")
         self.session.start()
+        QTimer.singleShot(5000, lambda s=self.session: self._check_silence(s))
+
+    def _on_level(self, value: float) -> None:
+        self._loudest = max(self._loudest, value)
+        self.meter.setValue(min(100, int(value * 400)))
+
+    def _check_silence(self, session) -> None:
+        """macOS gives a blocked app a microphone that only sends zeros,
+        with no error; say so instead of listening to nothing."""
+        if session is not self.session or session.duration < 2 or self._loudest > 1e-6:
+            return
+        host = "the app you started KherveNote from (PyCharm, Terminal…)" \
+            if not getattr(sys, "frozen", False) else "KherveNote"
+        self.statusBar().showMessage("The microphone is sending silence", 15000)
+        QMessageBox.warning(self, "Listen", (
+            "The microphone is sending only silence — macOS is probably blocking "
+            f"it.\n\nAllow {host} in System Settings ▸ Privacy & Security ▸ "
+            "Microphone, then quit and restart it. Or pick another input under "
+            "Speech ▸ Microphone."))
 
     def _stop_listening(self) -> None:
         self.act_listen.setChecked(False)
