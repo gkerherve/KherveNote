@@ -30,7 +30,7 @@ from .audio import input_devices
 from .model import Recording
 from .permissions import with_permission
 from .serializer import CONTINUOUS_LIMIT_MM, format_time, to_latex
-from .transcriber import DEFAULT_MODEL, LANGUAGES, MODELS, ListenSession, missing_packages
+from .transcriber import DEFAULT_MODEL, LANGUAGES, MODELS, ListenSession, download_progress, missing_packages
 
 
 def version_string() -> str:
@@ -194,6 +194,10 @@ class MainWindow(QMainWindow):
             self.statusBar().addPermanentWidget(w)
         self.session = None
         self._engine = None
+        self._preview = None
+        self._listen_hint = ""
+        self._download_timer = QTimer(self, interval=1000)
+        self._download_timer.timeout.connect(self._show_download)
         self._listen_start = 0.0
         self.clock = QLabel()
         self.statusBar().addPermanentWidget(self.clock)
@@ -603,8 +607,11 @@ class MainWindow(QMainWindow):
         t0 = self.note.elapsed() or 0.0
         self.session = ListenSession(str(path), t0, model,
                                      self.settings.value("speech/language", ""), device, self,
-                                     engine=self._engine[1] if self._engine else None)
+                                     engine=self._engine[1] if self._engine else None,
+                                     preview=self._preview)
         self.session.text.connect(self.editor.append_transcript)
+        self.session.partial.connect(self._on_partial)
+        self.session.status.connect(self._on_listen_status)
         self.session.level.connect(self._on_level)
         self._loudest = 0.0
         self.session.status.connect(lambda m: self.statusBar().showMessage(m, 6000))
@@ -616,8 +623,37 @@ class MainWindow(QMainWindow):
             w.setVisible(True)
         self.listen_label.setText("\u25cf Listening")
         self.listen_label.setStyleSheet(f"color:{theme.hex_('red')}; font-weight:bold;")
+        self._listen_hint = "\u25cf getting the microphone ready…"
+        self.editor.show_partial(self._listen_hint)
         self.session.start()
         QTimer.singleShot(5000, lambda s=self.session: self._check_silence(s))
+
+    def _on_partial(self, text: str) -> None:
+        # Between utterances keep a visible "listening" mark where the
+        # words will appear, so it never looks as if nothing is happening.
+        if self.session is not None:
+            self.editor.show_partial(text or self._listen_hint)
+
+    def _on_listen_status(self, message: str) -> None:
+        if message.startswith("Downloading"):
+            self._download_timer.start()
+            self._listen_hint = "\u25cf " + message
+        elif message.startswith("Loading"):
+            self._listen_hint = "\u25cf loading the speech model…"
+        elif message == "Listening":
+            self._download_timer.stop()
+            self._listen_hint = "\u25cf listening…"
+        self.editor.show_partial(self._listen_hint)
+
+    def _show_download(self) -> None:
+        if self.session is None:
+            self._download_timer.stop()
+            return
+        done, total = download_progress(self.session.model_name)
+        of = f" of {total} MB" if total else " MB"
+        self._listen_hint = (f"\u25cf downloading the speech model — {done}{of}, once only. "
+                             "Keep talking: it is being recorded.")
+        self.editor.show_partial(self._listen_hint)
 
     def _on_level(self, value: float) -> None:
         self._loudest = max(self._loudest, value)
@@ -644,6 +680,7 @@ class MainWindow(QMainWindow):
             w.setVisible(False)
         if self.session is not None:
             self.statusBar().showMessage("Writing down the last words…", 8000)
+            self._listen_hint = "\u25cf writing down the last words…"
             self.session.stop()
 
     def _listen_failed(self, message: str) -> None:
@@ -655,6 +692,10 @@ class MainWindow(QMainWindow):
     def _session_done(self, session, model: str) -> None:
         if session.engine is not None:
             self._engine = (model, session.engine)
+        if session.preview is not None:
+            self._preview = session.preview
+        self._download_timer.stop()
+        self.editor.show_partial("")
         path = Path(session.audio_path)
         if path.exists() and session.duration > 0:
             rel = path.relative_to(self.work_dir).as_posix()

@@ -22,7 +22,7 @@ from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QTextBlock, QTextBlockFormat,
     QTextBlockUserData, QTextCharFormat, QTextCursor, QTextDocument,
-    QTextFormat, QTextImageFormat, QTextListFormat,
+    QTextFormat, QTextImageFormat, QTextLayout, QTextListFormat,
 )
 from PySide6.QtWidgets import QTextEdit, QWidget
 
@@ -243,6 +243,7 @@ class NoteEditor(QTextEdit):
         super().__init__(parent)
         self.clock = clock
         self.work_dir = None
+        self._partial: Optional[QTextBlock] = None
         self.setAcceptRichText(False)
         self.setFrameShape(QTextEdit.NoFrame)
         self.setTabChangesFocus(False)
@@ -406,36 +407,49 @@ class NoteEditor(QTextEdit):
         cur.endEditBlock()
         self.setTextCursor(cur)
 
-    def append_transcript(self, text: str, t: float) -> None:
-        """Write recognised speech at the end of the note, without
-        disturbing the user: if they are typing in the last paragraph,
-        the speech goes just above it; their cursor and selection never
-        move.  Speech that follows on quickly joins the paragraph before
-        it, so the transcript reads as prose rather than one line per
-        pause."""
+    def _transcript_target(self, t: Optional[float]) -> tuple[QTextBlock, str]:
+        """Where speech goes next: the block to write after, and how —
+        "join" the transcript paragraph there, "fill" an empty paragraph,
+        or start a "new" one after it.  If the user is typing in the last
+        paragraph, speech goes just above it."""
         doc = self.document()
-        user = self.textCursor()
-        pos, anchor = user.position(), user.anchor()
         last = doc.lastBlock()
         kind_last, _ = block_kind(last)
         if last.previous().isValid() and (
                 not last.text().strip()
-                or (user.block() == last and kind_last not in ("heading", "transcript"))):
+                or (self.textCursor().block() == last
+                    and kind_last not in ("heading", "transcript"))):
             after = last.previous()
         else:
             after = last
+        meta = after.userData()
+        kind_after, _ = block_kind(after)
+        if (kind_after == "transcript" and isinstance(meta, BlockMeta)
+                and meta.t_last is not None and (t is None or t - meta.t_last < 25)
+                and len(after.text()) < 500):
+            return after, "join"
+        if not after.text().strip() and after.textList() is None and kind_after != "heading":
+            return after, "fill"
+        return after, "new"
+
+    def append_transcript(self, text: str, t: float) -> None:
+        """Write recognised speech at the end of the note without
+        disturbing the user: their cursor and selection never move.
+        Speech that follows on quickly joins the paragraph before it, so
+        the transcript reads as prose rather than one line per pause."""
+        self.show_partial("")
+        doc = self.document()
+        user = self.textCursor()
+        pos, anchor = user.position(), user.anchor()
+        after, mode = self._transcript_target(t)
         cur = QTextCursor(after)
         cur.beginEditBlock()
         cur.movePosition(QTextCursor.EndOfBlock)
         insert_at = cur.position()
-        meta = after.userData()
-        kind_after, _ = block_kind(after)
-        if (kind_after == "transcript" and isinstance(meta, BlockMeta)
-                and meta.t_last is not None and t - meta.t_last < 25
-                and len(after.text()) < 500):
+        if mode == "join":
             cur.insertText(" " + text)
-            meta.t_last = t
-        elif not after.text().strip() and after.textList() is None and kind_after != "heading":
+            after.userData().t_last = t
+        elif mode == "fill":
             apply_style(after, "transcript")
             after.setUserData(BlockMeta(t))
             cur.insertText(text)
@@ -453,7 +467,46 @@ class NoteEditor(QTextEdit):
             restore.setPosition(anchor)
             restore.setPosition(pos, QTextCursor.KeepAnchor)
             self.setTextCursor(restore)
+        self._follow_end()
         self.gutter.update()
+
+    def show_partial(self, text: str) -> None:
+        """Show *text* — words being spoken, or what the microphone is
+        doing — where the transcript will continue, without making it
+        part of the document.  It is drawn as the paragraph's pre-edit
+        area, the mechanism input methods use for text still being
+        composed, so it never enters the undo history, the saved note or
+        the export.  "" removes it."""
+        old = self._partial
+        if old is not None and old.isValid():
+            old.layout().setPreeditArea(-1, "")
+            old.layout().clearFormats()
+            self.document().markContentsDirty(old.position(), old.length())
+        self._partial = None
+        if not text:
+            return
+        host, mode = self._transcript_target(None)
+        shown = {"join": " ", "fill": "", "new": _LINE_SEP}[mode] + text
+        at = host.length() - 1
+        layout = host.layout()
+        layout.setPreeditArea(at, shown)
+        cf = QTextCharFormat()
+        cf.setForeground(theme.color("muted"))
+        cf.setFontItalic(True)
+        cf.setFontWeight(QFont.Normal)
+        cf.setFontPointSize(BASE_PT)
+        fr = QTextLayout.FormatRange()
+        fr.start, fr.length, fr.format = at, len(shown), cf
+        layout.setFormats([fr])
+        self._partial = host
+        self.document().markContentsDirty(host.position(), host.length())
+        self._follow_end()
+
+    def _follow_end(self) -> None:
+        """Keep the newest speech in view while the user is at the end."""
+        bar = self.verticalScrollBar()
+        if bar.maximum() - bar.value() < 120:
+            QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
     def loadResource(self, rtype: int, url: QUrl):  # noqa: N802
         if rtype == QTextDocument.ImageResource and self.work_dir is not None:

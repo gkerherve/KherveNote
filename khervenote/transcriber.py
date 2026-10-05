@@ -11,6 +11,7 @@ transcription → ``text`` signal on the GUI thread.
 """
 from __future__ import annotations
 
+import os
 import queue
 import threading
 from typing import Optional
@@ -63,18 +64,53 @@ def model_is_cached(name: str) -> bool:
     return bool(repo) and isinstance(try_to_load_from_cache(repo, "model.bin"), str)
 
 
+#: The live preview needs speed more than accuracy: below this size it
+#: uses the chosen model, above it this one (when it is downloaded).
+PREVIEW_MODEL = "base"
+_SMALLER = ("tiny", "base")
+
+
+_MODEL_MB = {"tiny": 75, "base": 145, "small": 484, "medium": 1530, "large-v3-turbo": 1620}
+
+
+def download_progress(name: str) -> tuple[int, int]:
+    """(MB on disk so far, MB expected) of a model being downloaded."""
+    try:
+        from faster_whisper.utils import _MODELS
+    except ImportError:
+        return 0, 0
+    repo = _MODELS.get(name, "")
+    root = os.environ.get("HF_HUB_CACHE") or os.path.join(
+        os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface")), "hub")
+    folder = os.path.join(root, "models--" + repo.replace("/", "--"), "blobs")
+    done = 0
+    if os.path.isdir(folder):
+        for entry in os.scandir(folder):
+            if entry.is_file():
+                done += entry.stat().st_size
+    return done // 1_000_000, _MODEL_MB.get(name, 0)
+
+
 class WhisperEngine:
     def __init__(self, name: str = DEFAULT_MODEL) -> None:
         from faster_whisper import WhisperModel
+        # Once downloaded, never touch the network: the Hub check costs
+        # seconds at every start and fails offline.
+        local = model_is_cached(name)
         # int8 on the CPU is fast enough for live speech on any recent
         # laptop, and needs no GPU stack.
-        self.model = WhisperModel(name, device="cpu", compute_type="int8")
+        self.model = WhisperModel(name, device="cpu", compute_type="int8",
+                                  cpu_threads=min(8, os.cpu_count() or 4),
+                                  local_files_only=local)
 
     def transcribe(self, audio: np.ndarray, language: str = "",
-                   prompt: str = "") -> tuple[str, Optional[str]]:
+                   prompt: str = "", fast: bool = False) -> tuple[str, Optional[str]]:
+        # Greedy decoding: beam search costs ~30 % more time for little
+        # gain on clear lecture speech.  The preview also skips the VAD.
         segments, info = self.model.transcribe(
-            audio, language=language or None, beam_size=3, vad_filter=True,
-            condition_on_previous_text=False, initial_prompt=prompt or None)
+            audio, language=language or None, beam_size=1, vad_filter=not fast,
+            without_timestamps=True, condition_on_previous_text=False,
+            initial_prompt=prompt or None)
         parts = []
         for seg in segments:
             if seg.no_speech_prob > 0.6 and seg.avg_logprob < -1.0:
@@ -87,17 +123,31 @@ class WhisperEngine:
 
 
 class ListenSession(QObject):
-    """One run of the microphone, from Listen to Stop."""
+    """One run of the microphone, from Listen to Stop.
 
-    text = Signal(str, float)        # recognised text, session time it started
+    One worker thread does all the transcribing.  Finished utterances
+    (cut at pauses) come first; whenever there are none waiting, it
+    transcribes the utterance still in progress with a fast model and
+    emits it as ``partial`` — the words appear while they are spoken and
+    are replaced by the final ``text`` once the speaker pauses.
+    """
+
+    text = Signal(str, float)        # final text, session time it started
+    partial = Signal(str)            # the words being spoken now ("" clears)
     level = Signal(float)            # microphone level, 0..1-ish
     status = Signal(str)
     failed = Signal(str)
     finished = Signal()
 
+    #: Seconds of new audio before the preview is refreshed.
+    PREVIEW_STEP = 0.4
+    #: The preview looks at most this far back.
+    PREVIEW_WINDOW = 10.0
+
     def __init__(self, audio_path: str, t0: float, model: str = DEFAULT_MODEL,
                  language: str = "", device: Optional[int] = None, parent=None,
-                 engine: Optional[WhisperEngine] = None) -> None:
+                 engine: Optional[WhisperEngine] = None,
+                 preview: Optional[WhisperEngine] = None) -> None:
         super().__init__(parent)
         self.audio_path = audio_path
         self.t0 = t0
@@ -105,11 +155,16 @@ class ListenSession(QObject):
         self.language = language
         self.device = device
         self.engine = engine
+        self.preview = preview
         self.chunker = Chunker()
+        self._lock = threading.Lock()
         self._chunks: "queue.Queue[Optional[Chunk]]" = queue.Queue()
         self._recorder: Optional[Recorder] = None
         self._worker: Optional[threading.Thread] = None
         self._context = ""
+        self._heard = 0              # samples fed so far
+        self._previewed = 0          # _heard at the last preview
+        self._stopping = False
 
     # capture side
 
@@ -130,14 +185,20 @@ class ListenSession(QObject):
             self.failed.emit(f"Could not open the microphone: {exc}")
 
     def feed(self, frames: np.ndarray) -> None:
-        for chunk in self.chunker.feed(frames):
+        with self._lock:
+            chunks = self.chunker.feed(frames)
+            self._heard += len(frames)
+        for chunk in chunks:
             self._chunks.put(chunk)
 
     def stop(self) -> None:
+        self._stopping = True
         if self._recorder is not None:
             self._recorder.stop()
             self.audio_path = self._recorder.path
-        for chunk in self.chunker.flush():
+        with self._lock:
+            chunks = self.chunker.flush()
+        for chunk in chunks:
             self._chunks.put(chunk)
         self._chunks.put(None)
 
@@ -147,20 +208,38 @@ class ListenSession(QObject):
 
     # transcription side
 
-    def _transcribe_loop(self) -> None:
+    def _load(self) -> bool:
         if self.engine is None:
             cached = model_is_cached(self.model_name)
             self.status.emit(f"Loading the speech model ({self.model_name})…" if cached else
-                             f"Downloading the speech model ({self.model_name}) — once only…")
+                             f"Downloading the speech model ({self.model_name}) — once only. "
+                             "Keep talking: it is being recorded.")
             try:
                 self.engine = WhisperEngine(self.model_name)
             except Exception as exc:  # noqa: BLE001 — download / load failures
                 self.failed.emit(f"Could not load the speech model: {exc}")
-                self._drain_until_end()
-                return
+                return False
+        if self.preview is None:
+            if self.model_name in _SMALLER or not model_is_cached(PREVIEW_MODEL):
+                self.preview = self.engine
+            else:
+                try:
+                    self.preview = WhisperEngine(PREVIEW_MODEL)
+                except Exception:  # noqa: BLE001 — fall back to the main model
+                    self.preview = self.engine
+        return True
+
+    def _transcribe_loop(self) -> None:
+        if not self._load():
+            self._drain_until_end()
+            return
         self.status.emit("Listening")
         while True:
-            chunk = self._chunks.get()
+            try:
+                chunk = self._chunks.get(timeout=0.05)
+            except queue.Empty:
+                self._maybe_preview()
+                continue
             if chunk is None:
                 break
             try:
@@ -170,10 +249,30 @@ class ListenSession(QObject):
                 continue
             if lang and not self.language:
                 self.language = lang          # stop re-detecting every chunk
+            self.partial.emit("")
             if text:
                 self._context = (self._context + " " + text)[-220:]
                 self.text.emit(text, self.t0 + chunk.start_s)
+        self.partial.emit("")
         self.finished.emit()
+
+    def _maybe_preview(self) -> None:
+        if self._stopping or not self._chunks.empty():
+            return
+        with self._lock:
+            if self._heard - self._previewed < self.PREVIEW_STEP * RATE:
+                return
+            self._previewed = self._heard
+            pending = self.chunker.pending()
+        if pending is None:
+            return
+        audio = pending.audio[-int(self.PREVIEW_WINDOW * RATE):]
+        try:
+            text, _ = self.preview.transcribe(audio, self.language, self._context, fast=True)
+        except Exception:  # noqa: BLE001 — a failed preview is not worth reporting
+            return
+        if text and self._chunks.empty():
+            self.partial.emit(text)
 
     def _drain_until_end(self) -> None:
         while self._chunks.get() is not None:

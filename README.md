@@ -21,8 +21,11 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
   the toolbar buttons). **Tab** makes a sub-item — numbered sub-items
   export as 1.1, 1.2, 1.2.1 — Shift+Tab goes back, Enter on an empty item
   leaves the list.
-- **Listen** (the microphone, Ctrl+L): what is said is written onto the
-  page in grey as it is spoken, with its time; keep typing your own notes
+- **Listen** (the microphone, Ctrl+L): the words appear on the page *as
+  they are spoken* (grey italic, refreshed about twice a second), then
+  settle into the final transcript a second after the speaker pauses.
+  A "● listening…" mark sits where the words will appear, and shows the
+  download / loading state the first time. Keep typing your own notes
   meanwhile — the speech goes in above the line you are writing. Press
   again to stop. Speech-to-text is **Whisper running on this computer**
   (faster-whisper): the audio never leaves it. The model downloads once

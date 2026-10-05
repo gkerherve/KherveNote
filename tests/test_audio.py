@@ -53,3 +53,14 @@ def test_recording_format_round_trips(tmp_path):
         f.write(_tone(2))
     data, rate = sf.read(path, dtype="float32")
     assert rate == RATE and abs(len(data) - 2 * RATE) < RATE // 10
+
+
+def test_pending_is_the_speech_in_progress():
+    c = Chunker()
+    assert c.pending() is None
+    c.feed(_silence(0.5))
+    assert c.pending() is None
+    c.feed(_tone(1.0))
+    p = c.pending()
+    assert p is not None and 0.2 < p.start_s < 0.5
+    assert len(p.audio) < 1.5 * RATE

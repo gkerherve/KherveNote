@@ -170,3 +170,28 @@ def test_image_survives_save_and_reopen(ed, tmp_path):
     load_note(ed, back)
     again = document_to_note(ed.document(), Note.new())
     assert [(b.kind, b.text, b.path) for b in again.sections[0].blocks] == kinds
+
+
+def test_live_words_are_shown_but_never_part_of_the_note(ed):
+    load_note(ed, Note.new())
+    ed.append_transcript("Done sentence.", 1.0)
+    undo = ed.document().availableUndoSteps()
+    ed.show_partial("words being spo")
+    block = ed.document().lastBlock()
+    assert block.layout().preeditAreaText() == " words being spo"
+    assert ed.document().toPlainText() == "Done sentence."
+    assert ed.document().availableUndoSteps() == undo
+    assert not ed.document().isModified() or undo
+    ed.append_transcript("Words being spoken.", 3.0)     # final text replaces it
+    assert block.layout().preeditAreaText() == ""
+    assert ed.document().toPlainText() == "Done sentence. Words being spoken."
+
+
+def test_live_words_after_a_heading_start_their_own_line(ed):
+    load_note(ed, Note.new())
+    ed.new_section("Results")
+    ed.show_partial("hello")
+    host = ed.document().lastBlock()
+    assert host.layout().preeditAreaText() == " hello"
+    ed.show_partial("")
+    assert host.layout().preeditAreaText() == ""

@@ -40,7 +40,7 @@ class Chunk:
 
 
 class Chunker:
-    def __init__(self, min_s: float = 3.0, max_s: float = 14.0, pause_s: float = 0.6,
+    def __init__(self, min_s: float = 1.5, max_s: float = 10.0, pause_s: float = 0.5,
                  floor: float = 0.006) -> None:
         self.min_n = int(min_s * RATE)
         self.max_n = int(max_s * RATE)
@@ -99,6 +99,18 @@ class Chunker:
             if chunk is not None:
                 out.append(chunk)
         return out
+
+    def pending(self) -> Optional[Chunk]:
+        """The speech heard since the last chunk, for a live preview, or
+        None while it is still only quiet."""
+        if len(self._buf) < _FRAME * 10:
+            return None
+        levels = self._levels(self._buf)
+        loud = ~self._quiet(levels)
+        if not loud.any() or levels.max() < self.floor * 2:
+            return None
+        skip = max(0, int(np.argmax(loud)) - 7) * _FRAME
+        return Chunk(self._start + skip, self._buf[skip:].copy())
 
     def flush(self) -> list[Chunk]:
         if not len(self._buf):
