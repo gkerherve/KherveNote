@@ -227,7 +227,8 @@ def rephrase(model: str, text: str) -> str:
 #: picked a model.  Anything else (custom models with their own system
 #: prompt, e.g. an XPS assistant built for KherveFitting) is used only
 #: when nothing general is installed.
-_GENERAL = ("qwen", "llama", "gemma", "mistral", "phi", "granite", "deepseek")
+_GENERAL = ("qwen", "gemma", "ministral", "mistral", "llama", "aya", "phi", "granite",
+            "gpt-oss", "deepseek")
 
 
 def pick_default(models: list[str], preferred: str = "") -> str:

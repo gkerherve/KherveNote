@@ -205,21 +205,35 @@ the download, and installs a model with one click.
    model*.
 
 **Which model?** Bigger models write better but are slower and need more
-memory — keep the model under about a third of the computer's memory.
+memory. The set-up window marks each one *fits this computer* or *needs
+more memory*. The model shares the memory with Whisper and the rest of
+the computer, so keep it under about 40 % of it (6–7 GB on a 16 GB Mac).
+Installing two or three and comparing them on a real note is the best
+way to choose.
 
 | Model | Size | Made by | Good for |
 |---|---|---|---|
-| [qwen3.5:4b](https://ollama.com/library/qwen3.5) | 3.4 GB | Alibaba | **Recommended.** The best all-rounder for notes: good summaries and rewriting, many languages, long documents. |
-| [granite4:micro-h](https://ollama.com/library/granite4) | 1.9 GB | IBM | Small and fast, light on memory even with long texts. Plain, factual style; fewer languages than Qwen. Good on an 8 GB laptop. |
-| [gemma3:4b](https://ollama.com/library/gemma3) | ≈ 3.3 GB | Google | Natural, readable writing; several languages. |
-| [llama3.2:3b](https://ollama.com/library/llama3.2) | ≈ 2 GB | Meta | Quick, good English; weaker on long documents and other languages. |
+| [qwen3.5:9b](https://ollama.com/library/qwen3.5) | 6.6 GB | Alibaba | **Best for notes on a 16 GB computer**: clearly better summaries and rewriting than the 4b; many languages; long documents. |
+| [gemma4:e4b](https://ollama.com/library/gemma4) | 6.6 GB | Google | Google's newest small model: natural writing, many languages, reads images too. |
+| [ministral-3:8b](https://ollama.com/library/ministral-3) | 6.0 GB | Mistral AI | From a French company: strong in French and other European languages. |
+| [aya-expanse:8b](https://ollama.com/library/aya-expanse) | 5.1 GB | Cohere | Made for 23 languages — when talks are not in English. |
+| [gemma4:e2b](https://ollama.com/library/gemma4) | 4.6 GB | Google | The lighter Gemma 4: quicker, still good. |
+| [granite4:7b-a1b-h](https://ollama.com/library/granite4) | 4.2 GB | IBM | A bigger Granite that stays very fast; plain, factual style. |
+| [qwen3.5:4b](https://ollama.com/library/qwen3.5) | 3.3 GB | Alibaba | The best small all-rounder; fine on 8 GB. |
+| [ministral-3:3b](https://ollama.com/library/ministral-3) | 3.0 GB | Mistral AI | Small and quick, good French. |
+| [phi4-mini](https://ollama.com/library/phi4-mini) | 2.5 GB | Microsoft | Small and quick; decent summaries. |
+| [llama3.2:3b](https://ollama.com/library/llama3.2) | 2.0 GB | Meta | Quick, good English; weaker on long documents and other languages. |
+| [granite4:micro-h](https://ollama.com/library/granite4) | 1.9 GB | IBM | The smallest: fast and light on long texts; plain style, mostly English. |
+
+Too big for most laptops (they need 32 GB or more): gpt-oss:20b
+(OpenAI, 14 GB), mistral-small3.2 (15 GB), qwen3.6 and qwen3.8 (18 GB
+and up).
 
 **Qwen or Granite?** Qwen 3.5 gives the most polished summaries and
-rewrites and handles French, German and other languages best — use it
-if the computer has 16 GB of memory or more. Granite 4 micro is about
-half the size and stays quick on long documents thanks to its hybrid
-design; its writing is plainer and more literal, and it is strongest in
-English. Both are free to use.
+rewrites and handles French, German and other languages best. Granite 4
+stays quick on long documents thanks to its hybrid design; its writing
+is plainer and more literal, and it is strongest in English. Both are
+free to use.
 
 Every model Ollama has is listed under *AI ▸ Local AI model* —
 including custom ones made for other apps, such as the *xps-expert*

@@ -6,6 +6,7 @@ model to install for notes, and how the models differ — with a button to
 install one."""
 from __future__ import annotations
 
+import os
 import threading
 
 from PySide6.QtCore import QObject, QUrl, Qt, Signal
@@ -20,20 +21,45 @@ from . import local_ai, theme
 DOWNLOAD_URL = "https://ollama.com/download"
 LIBRARY_URL = "https://ollama.com/library/"
 
-#: (model, size on disk, who makes it, what it is good for)
+#: (model, GB on disk, who makes it, what it is good for) — sizes from
+#: ollama.com (October 2026), smallest last within each tier.
 RECOMMENDED = (
-    ("qwen3.5:4b", "3.4 GB", "Qwen — Alibaba",
-     "Recommended. The best all-rounder for notes: good summaries and rewriting, "
-     "works well in many languages (English, French, German, Chinese…), and copes "
-     "with long documents."),
-    ("granite4:micro-h", "1.9 GB", "Granite — IBM",
-     "Small and fast, and light on memory even with long texts. Plain, factual "
-     "style; fewer languages than Qwen. A good choice on a laptop with 8 GB."),
-    ("gemma3:4b", "≈ 3.3 GB", "Gemma — Google",
-     "Natural, readable writing and several languages. Similar size to Qwen."),
-    ("llama3.2:3b", "≈ 2 GB", "Llama — Meta",
+    ("qwen3.5:9b", 6.6, "Qwen 3.5 — Alibaba",
+     "The best for notes if the computer has 16 GB: clearly better summaries and "
+     "rewriting than the 4b, many languages, long documents."),
+    ("gemma4:e4b", 6.6, "Gemma 4 — Google",
+     "Google's newest small model: natural writing, many languages; can read images too."),
+    ("ministral-3:8b", 6.0, "Ministral 3 — Mistral AI",
+     "From a French company: strong in French and other European languages."),
+    ("aya-expanse:8b", 5.1, "Aya Expanse — Cohere",
+     "Made for 23 languages — a good choice when talks are not in English."),
+    ("gemma4:e2b", 4.6, "Gemma 4 — Google", "The lighter Gemma 4: quicker, still good."),
+    ("granite4:7b-a1b-h", 4.2, "Granite 4 — IBM",
+     "A bigger Granite that stays very fast; plain, factual style."),
+    ("qwen3.5:4b", 3.3, "Qwen 3.5 — Alibaba",
+     "The best small all-rounder: good summaries and rewriting, many languages. "
+     "Fine on 8 GB."),
+    ("ministral-3:3b", 3.0, "Ministral 3 — Mistral AI", "Small and quick, good French."),
+    ("phi4-mini", 2.5, "Phi-4 mini — Microsoft", "Small and quick; decent summaries."),
+    ("llama3.2:3b", 2.0, "Llama 3.2 — Meta",
      "Quick, with good English; weaker on long documents and other languages."),
+    ("granite4:micro-h", 1.9, "Granite 4 micro — IBM",
+     "The smallest here: fast and light even on long texts; plain style, mostly English."),
 )
+
+
+def memory_gb() -> float:
+    """This computer's memory, for saying which models fit."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3
+    except (ValueError, OSError, AttributeError):
+        return 0.0
+
+
+def fits(size_gb: float, memory: float) -> bool:
+    # The model, Whisper, the app and the system share the memory; a
+    # model over ~40 % of it makes everything crawl.
+    return memory <= 0 or size_gb <= 0.42 * memory
 
 
 class _Signals(QObject):
@@ -77,9 +103,13 @@ class AISetupDialog(QDialog):
         step2 = QLabel(
             "<h3>2. Install a model, and choose it</h3>"
             "<p>A model is the AI itself. Bigger models write better but are slower and "
-            "need more memory — as a rough guide, keep the model under a third of the "
-            "computer's memory. Each name links to its page on ollama.com, where larger "
-            "and smaller versions are listed.</p>")
+            "need more memory; each is marked <i>fits this computer</i> or <i>needs more "
+            f"memory</i> for this computer's {memory_gb():.0f} GB. Installing two or three "
+            "and comparing them on a real note is the best way to choose. Each name links "
+            "to its page on ollama.com.</p>"
+            "<p><i>Too big for most laptops: gpt-oss:20b (OpenAI, 14 GB), "
+            "mistral-small3.2 (15 GB), qwen3.6 / qwen3.8 (18 GB and up) — they need 32 GB "
+            "or more.</i></p>")
         step2.setWordWrap(True)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Model", "Size", "What it is good for", ""])
@@ -140,15 +170,20 @@ class AISetupDialog(QDialog):
                 f"<p>● Ollama is running — {len(models)} model(s) installed. "
                 f"KherveNote uses: <b>{current or 'none yet'}</b>.</p>")
         self.table.setRowCount(0)
+        memory = memory_gb()
         for name, size, maker, good in RECOMMENDED:
             r = self.table.rowCount()
             self.table.insertRow(r)
+            ok = fits(size, memory)
             link = QLabel(f"<a href='{LIBRARY_URL}{name.split(':')[0]}'>{name}</a><br>"
                           f"<span style='color:{theme.hex_('muted')}'>{maker}</span>")
             link.setOpenExternalLinks(True)
             link.setContentsMargins(6, 4, 6, 4)
             self.table.setCellWidget(r, 0, link)
-            self.table.setItem(r, 1, QTableWidgetItem(size))
+            size_item = QTableWidgetItem(f"{size:g} GB\n" + ("fits this computer" if ok
+                                                              else "needs more memory"))
+            size_item.setForeground(theme.color("text" if ok else "muted"))
+            self.table.setItem(r, 1, size_item)
             self.table.setItem(r, 2, QTableWidgetItem(good))
             self.table.setCellWidget(r, 3, self._action(name, models, current, running))
         self.table.resizeRowsToContents()

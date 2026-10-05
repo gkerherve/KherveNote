@@ -117,3 +117,10 @@ def test_streaming_reports_text_and_can_be_cancelled(monkeypatch):
     job.cancelled.set()
     with pytest.raises(local_ai.Cancelled):
         job.run(local_ai.chat, "m", "sys", "text")
+
+
+def test_which_models_fit():
+    from khervenote import ai_setup
+    assert ai_setup.fits(6.6, 16) and not ai_setup.fits(14, 16) and ai_setup.fits(14, 64)
+    assert ai_setup.fits(99, 0)                  # memory unknown: do not hide anything
+    assert len({m[0] for m in ai_setup.RECOMMENDED}) == len(ai_setup.RECOMMENDED)
