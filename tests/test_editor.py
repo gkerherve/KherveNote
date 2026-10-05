@@ -143,3 +143,30 @@ def test_transcript_after_a_new_heading_keeps_the_cursor_in_it(ed):
                           ("transcript", "Results now.")]
     n = document_to_note(ed.document(), Note.new())
     assert n.sections[1].blocks[0].t == 90.0
+
+
+def test_image_survives_save_and_reopen(ed, tmp_path):
+    from PySide6.QtGui import QColor, QImage
+
+    from khervenote.knote_file import load_knote, save_knote
+    work = tmp_path / "work"
+    (work / "assets").mkdir(parents=True)
+    img = QImage(80, 40, QImage.Format_RGB32)
+    img.fill(QColor("red"))
+    img.save(str(work / "assets/a.png"))
+    ed.work_dir = work
+    load_note(ed, Note.new())
+    QTest.keyClicks(ed, "before")
+    ed.insert_image("assets/a.png", img, "Slide 1")
+    QTest.keyClicks(ed, "after")
+    note = document_to_note(ed.document(), Note.new())
+    kinds = [(b.kind, b.text, b.path) for b in note.sections[0].blocks]
+    assert kinds == [("typed", "before", ""), ("image", "Slide 1", "assets/a.png"),
+                     ("typed", "after", "")]
+    save_knote(note, tmp_path / "n.knote", work)
+    other = tmp_path / "other"
+    back = load_knote(tmp_path / "n.knote", other)
+    ed.work_dir = other
+    load_note(ed, back)
+    again = document_to_note(ed.document(), Note.new())
+    assert [(b.kind, b.text, b.path) for b in again.sections[0].blocks] == kinds
