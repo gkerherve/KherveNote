@@ -39,7 +39,7 @@ with its date.
 **Notes save themselves** a couple of seconds after every change, and
 when you open another note or quit — there is no need to press Save.
 A new note gets its file as soon as something is written in it, named
-after its title (or "Note <date>" until it has one).
+after its title (or "Note 2026-10-05 14.30" until it has one).
 
 All notes are ordinary `.knote` files in **Documents ▸ KherveNote**, the
 folders are ordinary folders: you can back them up or sync them like
