@@ -44,13 +44,25 @@ the user's request.
 
 - Comments only when the *why* is non-obvious.
 - The **document model** (`khervenote/model.py`) is the single source of
-  truth. The live page, `.knote` file, serializer and MCP tools all go
-  through it. LaTeX strings are produced only in `serializer.py`.
+  truth for everything persisted or exported. The `.knote` file,
+  serializer and AI tools read the model; the page (`editor.py`, one
+  endless `QTextEdit` the user writes on directly) converts to and from
+  it only through `document_to_note` / `load_note`. LaTeX strings are
+  produced only in `serializer.py`.
+- In the editor a paragraph's kind lives in its block format
+  (`KIND`/`LEVEL`), its capture time in block user data (`BlockMeta`) so
+  stamping never touches the undo stack. Sections are level-1 headings.
 - Tests in `tests/` cover model, file format and serializer (including
   real tectonic compiles when tectonic is installed). Changes to those
   modules come with tests in the same commit.
 - Toolbar icons are drawn in `icons.py` with QPainter — no PNG/SVG files.
-- The light Fusion palette in `__main__.py` is intentional.
+- Themes (`theme.py`: System / Light / Dark) always set an explicit
+  Fusion palette — never leave the platform palette in charge (the
+  Windows dark theme made drawn icons invisible). Colours come from
+  `theme.color()`, never hard-coded in widgets; icons are redrawn on a
+  theme change.
+- The page is one seamless surface: no page edges, borders or desk
+  colour around the text.
 
 ## The continuous PDF
 
@@ -67,15 +79,19 @@ stack. Consequences that must hold for anything added to the template:
 
 ## Roadmap
 
-| Version | Scope |
-|---|---|
-| 0.1 | Model, `.knote`, continuous live page, typed notes / key points / questions / images, manual sections, LaTeX + continuous/A4 PDF export |
-| 0.2 | Microphone capture + **offline Whisper** (mlx-whisper on Mac, faster-whisper on Windows), pause/stop, audio kept in the `.knote` |
-| 0.3 | MCP server/bridge (copied from KherveTeX `mcp_*.py`), Connect to Claude, "Summarise with Claude" via `claude -p` |
-| 0.4 | Section suggestions: silence + cue phrases live, semantic via Claude |
-| 0.5 | Import Word / PDF / PowerPoint notes → Claude writes the document |
-| 0.6 | Open in KherveTeX (`.ktex`), KherveRef citations, slide screenshots |
-| 0.7 | Installers with tectonic, warmed package cache and a Whisper model |
+| Phase | Scope | State |
+|---|---|---|
+| Notes | Model, `.knote`, LaTeX + continuous/A4 PDF | done (0.1) |
+| Lists | Bullet / numbered / nested lists | done (0.2) |
+| Editor | Write directly on one endless page, headings, B/I/U, themes | done (0.3) |
+| Camera | Take a picture with the computer's camera | 0.4 |
+| Listen | Microphone + **offline Whisper** (faster-whisper) writing into the page | 0.5 |
+| Local AI | Right-click Summarise / Rephrase with **Ollama** | 0.6 |
+| Claude | MCP server/bridge (from KherveTeX `mcp_*.py`), "Summarise with Claude" | later |
+| Sections | Section suggestions: silence + cue phrases, then semantic | later |
+| Import | Word / PDF / PowerPoint notes → a proper document | later |
+| Links | Open in KherveTeX, KherveRef citations | later |
+| Release | Installers with tectonic, warmed cache and a Whisper model | later |
 
 Transcription stays **offline** (user decision, 2026-10-05): audio never
 leaves the machine.

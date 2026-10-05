@@ -26,7 +26,13 @@ FORMAT_VERSION = 1
 #: important  — flagged by the note-taker as a key point
 #: question   — something to ask or look up
 #: image      — a picture or slide screenshot stored in the note's assets
-BLOCK_KINDS = ("typed", "transcript", "important", "question", "image")
+#: heading    — a subsection heading inside a section (``level`` 2 or 3)
+#: item       — a list item (``level`` 0-3 nesting, ``numbered``)
+BLOCK_KINDS = ("typed", "transcript", "important", "question", "image",
+               "heading", "item")
+
+#: Inline styles a span of block text can carry.
+MARK_STYLES = ("b", "i", "u")
 
 LAYOUTS = ("continuous", "paged")
 
@@ -43,6 +49,11 @@ class Block:
     #: Asset path relative to the note (``assets/<name>``), images only.
     path: str = ""
     id: str = field(default_factory=_new_id)
+    #: Heading level (2-3) or list nesting depth (0-3).
+    level: int = 0
+    numbered: bool = False
+    #: Inline styles as ``[start, length, style]`` over ``text``.
+    marks: list[list] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.kind not in BLOCK_KINDS:
@@ -54,13 +65,22 @@ class Block:
             d["t"] = round(self.t, 2)
         if self.path:
             d["path"] = self.path
+        if self.level:
+            d["level"] = self.level
+        if self.numbered:
+            d["numbered"] = True
+        if self.marks:
+            d["marks"] = [list(m) for m in self.marks]
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Block":
         return cls(kind=d.get("kind", "typed"), text=d.get("text", ""),
                    t=d.get("t"), path=d.get("path", ""),
-                   id=d.get("id") or _new_id())
+                   id=d.get("id") or _new_id(), level=int(d.get("level", 0)),
+                   numbered=bool(d.get("numbered", False)),
+                   marks=[list(m) for m in d.get("marks", [])
+                          if len(m) == 3 and m[2] in MARK_STYLES])
 
 
 @dataclass
@@ -147,8 +167,8 @@ class Note:
         return sec
 
     def add_block(self, kind: str, text: str = "", t: Optional[float] = None,
-                  path: str = "") -> Block:
-        blk = Block(kind=kind, text=text, t=t, path=path)
+                  path: str = "", **kw) -> Block:
+        blk = Block(kind=kind, text=text, t=t, path=path, **kw)
         self.current.blocks.append(blk)
         return blk
 

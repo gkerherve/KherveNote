@@ -165,3 +165,35 @@ def test_one_section_taller_than_the_limit_still_compiles(tmp_path):
     res = compiler.compile_tex(to_latex(n, limit_pt=200), tmp_path)
     assert res.ok, res.log
     assert len(compiler.pdf_page_heights_mm(res.pdf_path)) >= 2
+
+
+def test_item_blocks_become_one_nested_list():
+    n = Note.new()
+    n.add_block("item", "one", numbered=True)
+    n.add_block("item", "sub", level=1, numbered=True)
+    n.add_block("item", "dot", level=1)
+    n.add_block("typed", "after")
+    tex = to_latex(n)
+    assert tex.count(r"\begin{enumerate}") == 2 and tex.count(r"\begin{itemize}") == 1
+    assert tex.index(r"\item one") < tex.index(r"\item sub") < tex.index(r"\item dot")
+    assert tex.index(r"\end{enumerate}") < tex.index("after")
+
+
+def test_subsection_headings():
+    n = Note.new()
+    n.add_block("heading", "Part A", level=2)
+    n.add_block("heading", "Detail", level=3)
+    n.add_block("heading", "  ", level=2)
+    tex = to_latex(n)
+    assert r"\subsection{Part A}" in tex and r"\subsubsection{Detail}" in tex
+    assert tex.count("subsection{") == 2
+
+
+def test_rich_marks():
+    from khervenote.serializer import rich_to_latex
+    assert rich_to_latex("a bold_word end", [[2, 9, "b"], [7, 4, "i"]]) == (
+        r"a \textbf{bold\_}\textit{\textbf{word}} end")
+    assert rich_to_latex("x\ny", []) == "x\\newline\ny"
+    n = Note.new()
+    n.add_block("typed", "- not a list", marks=[[2, 3, "u"]])
+    assert r"\underline{not}" in to_latex(n) and "itemize" not in to_latex(n)

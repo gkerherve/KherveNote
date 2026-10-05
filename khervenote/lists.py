@@ -6,8 +6,8 @@
 ``- item`` / ``* item`` / ``• item`` is a bullet, ``1. item`` / ``1) item``
 a numbered item; indenting a line under an item makes it a sub-item.
 Indents are compared with the lines above rather than counted in fixed
-units, so two spaces, four spaces and tabs all work.  Shared by the
-composer (continuing a list on Shift+Enter) and the serializer.
+units, so two spaces, four spaces and tabs all work.  Used by the
+serializer for text that carries the markers literally.
 """
 from __future__ import annotations
 
@@ -44,18 +44,6 @@ def parse_item(line: str) -> Optional[Item]:
 
 def indent_of(line: str) -> int:
     return _width(line[:len(line) - len(line.lstrip(" \t"))])
-
-
-def continuation(line: str) -> Optional[str]:
-    """What to start the next line with after *line*: the same indent and
-    the next marker (``3.`` after ``2.``), or None if *line* is no item."""
-    item = parse_item(line)
-    if item is None:
-        return None
-    lead = line[:len(line) - len(line.lstrip(" \t"))]
-    if item.numbered:
-        return f"{lead}{int(item.marker[:-1]) + 1}{item.marker[-1]} "
-    return f"{lead}{item.marker} "
 
 
 @dataclass

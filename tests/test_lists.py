@@ -1,4 +1,4 @@
-from khervenote.lists import continuation, nest, parse_item
+from khervenote.lists import nest, parse_item
 
 
 def test_parse_item():
@@ -6,13 +6,6 @@ def test_parse_item():
     assert parse_item("12) twelve").numbered
     assert parse_item("1.5 eV") is None
     assert parse_item("-dash") is None
-
-
-def test_continuation_keeps_indent_and_counts():
-    assert continuation("  3. third") == "  4. "
-    assert continuation("\t- x") == "\t- "
-    assert continuation("1) a") == "2) "
-    assert continuation("plain") is None
 
 
 def test_nest_uses_relative_indents():

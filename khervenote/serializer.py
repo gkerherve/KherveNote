@@ -32,7 +32,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .lists import is_list_line, nest
+from .lists import ListLine, is_list_line, nest
 from .model import Block, Note, Section
 
 #: geometry's paper height in continuous mode, below the PDF viewer cap.
@@ -64,12 +64,13 @@ def format_time(t: Optional[float]) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
-def _list_latex(lines: list[str]) -> str:
+def _render_list(lines: list[ListLine]) -> str:
+    """Nested itemize/enumerate from lines whose text is already LaTeX."""
     out: list[str] = []
     stack: list[str] = []
-    for ln in nest(lines):
+    for ln in lines:
         if not ln.item:
-            out[-1] += r"\newline " + escape(ln.text)
+            out[-1] += r"\newline " + ln.text
             continue
         env = "enumerate" if ln.numbered else "itemize"
         level = min(ln.level, len(stack))
@@ -79,10 +80,36 @@ def _list_latex(lines: list[str]) -> str:
         if len(stack) == level:
             out.append("  " * level + "\\begin{%s}" % env + _TIGHT)
             stack.append(env)
-        out.append("  " * len(stack) + r"\item " + escape(ln.text))
+        out.append("  " * len(stack) + r"\item " + ln.text)
     while stack:
         out.append("  " * (len(stack) - 1) + "\\end{%s}" % stack.pop())
     return "\n".join(out)
+
+
+def _list_latex(lines: list[str]) -> str:
+    return _render_list([ListLine(ln.level, ln.numbered, escape(ln.text), ln.item)
+                         for ln in nest(lines)])
+
+
+_MARK_MACROS = {"b": r"\textbf{%s}", "i": r"\textit{%s}", "u": r"\underline{%s}"}
+
+
+def rich_to_latex(text: str, marks: list) -> str:
+    """Text with inline bold / italic / underline spans; newlines inside
+    the text are line breaks."""
+    def plain(seg: str) -> str:
+        return "\\newline\n".join(escape(x) for x in seg.split("\n"))
+    if not marks:
+        return plain(text)
+    cuts = sorted({0, len(text)} | {max(0, min(len(text), c)) for m in marks
+                                    for c in (m[0], m[0] + m[1])})
+    out = []
+    for a, b in zip(cuts, cuts[1:]):
+        seg = plain(text[a:b])
+        for style in sorted({m[2] for m in marks if m[0] <= a and m[0] + m[1] >= b}):
+            seg = _MARK_MACROS[style] % seg
+        out.append(seg)
+    return "".join(out)
 
 
 def text_to_latex(text: str) -> str:
@@ -201,13 +228,24 @@ def _image(block: Block, asset_dir: Optional[Path]) -> str:
     return "\\begin{center}\n" + body + "\n" + cap + "\n\\end{center}"
 
 
+def _body(block: Block) -> str:
+    # Marks come from the editor; unmarked text may still use the typed
+    # list syntax ("- ", "1. ").
+    return rich_to_latex(block.text, block.marks) if block.marks else text_to_latex(block.text)
+
+
 def _block(block: Block, show_times: bool, asset_dir: Optional[Path]) -> str:
     stamp = format_time(block.t)
     lead = (r"\knotetime{" + stamp + "}") if stamp and (
         show_times or block.kind == "transcript") else ""
     if block.kind == "image":
         return _image(block, asset_dir) if block.path else ""
-    body = text_to_latex(block.text)
+    if block.kind == "heading":
+        title = escape(block.text.strip())
+        if not title:
+            return ""
+        return ("\\subsubsection{" if block.level >= 3 else "\\subsection{") + title + "}"
+    body = _body(block)
     if not body:
         return ""
     if block.kind == "important":
@@ -219,9 +257,28 @@ def _block(block: Block, show_times: bool, asset_dir: Optional[Path]) -> str:
     return lead + body
 
 
+def _blocks(blocks: list[Block], show_times: bool, asset_dir: Optional[Path]) -> list[str]:
+    """Each block's LaTeX, with runs of list items merged into one list."""
+    out: list[str] = []
+    run: list[ListLine] = []
+    for blk in blocks + [None]:
+        if blk is not None and blk.kind == "item":
+            if blk.text.strip():
+                run.append(ListLine(blk.level, blk.numbered, rich_to_latex(blk.text, blk.marks)))
+            continue
+        if run:
+            out.append(_render_list(run))
+            run = []
+        if blk is not None:
+            tex = _block(blk, show_times, asset_dir)
+            if tex:
+                out.append(tex)
+    return out
+
+
 def _section(sec: Section, first: bool, show_times: bool,
              asset_dir: Optional[Path]) -> str:
-    blocks = [b for b in (_block(x, show_times, asset_dir) for x in sec.blocks) if b]
+    blocks = _blocks(sec.blocks, show_times, asset_dir)
     if not blocks and not sec.title.strip():
         # A "New section" pressed by mistake, never titled or filled.
         return ""

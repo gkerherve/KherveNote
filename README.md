@@ -10,18 +10,19 @@ Part of the [KherveTools](https://khervetools.com) family, alongside
 
 ## Using it
 
-- Type in the box at the bottom and press **Enter** — the note lands on
-  the page with its time in the session. Shift+Enter for a new line;
-  lines starting with `-` become bullets.
-- Lists: `- ` (or `*`, `•`) starts a bullet, `1. ` a numbered item. Shift+Enter
-  continues the list, **Tab** makes a sub-item (numbered sub-items read
-  1.1, 1.2, 1.2.1), Shift+Tab goes back, an empty item ends the list. The
-  **Bullets** / **Numbering** buttons turn the current line into an item.
-- **New section** (Ctrl+Return) starts a section now; right-click any
-  note → *Start a section here* to start one after the fact.
-- **Key point** (Ctrl+Shift+K) and **Question** (Ctrl+Shift+Q) flag what
-  you type next; **Insert image** or Ctrl+Shift+V adds a picture or a
-  slide screenshot.
+- Write straight onto the page — it is one endless sheet, no page edges.
+  Each paragraph shows the time in the session it was written.
+- **Styles** (the picker in the toolbar, or Ctrl+0 / 1 / 2 / 3): Text,
+  Section, Subsection, Sub-subsection, Key point (Ctrl+Shift+K), Question
+  (Ctrl+Shift+Q), Transcript. Ctrl+Return starts a new section. The
+  *Sections* panel jumps to any heading.
+- **Bold / italic / underline**: Ctrl+B / I / U.
+- **Lists**: type `- ` for a bullet or `1. ` for a numbered item (or use
+  the toolbar buttons). **Tab** makes a sub-item — numbered sub-items
+  export as 1.1, 1.2, 1.2.1 — Shift+Tab goes back, Enter on an empty item
+  leaves the list.
+- **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
+- **Theme**: *View ▸ Theme* — System, Light or Dark (a black page).
 - **Export PDF** (Ctrl+E) — continuous page by default, A4 under
   *Export ▸ A4 pages*. **Export LaTeX** writes a standalone `.tex` and
   its `assets/` folder.
