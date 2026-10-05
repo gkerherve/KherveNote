@@ -32,6 +32,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from .lists import is_list_line, nest
 from .model import Block, Note, Section
 
 #: geometry's paper height in continuous mode, below the PDF viewer cap.
@@ -46,9 +47,7 @@ _SPECIALS = {
     "^": r"\textasciicircum{}", "\\": r"\textbackslash{}",
 }
 _SPECIALS_RE = re.compile(r"[&%$#_{}~^\\]")
-_BULLET_RE = re.compile(r"^\s*[-*•]\s+")
-_ITEMIZE = ("\\begin{itemize}\\setlength{\\itemsep}{0pt}"
-            "\\setlength{\\parskip}{0pt}\n")
+_TIGHT = r"\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}"
 
 
 def escape(text: str) -> str:
@@ -65,27 +64,48 @@ def format_time(t: Optional[float]) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
+def _list_latex(lines: list[str]) -> str:
+    out: list[str] = []
+    stack: list[str] = []
+    for ln in nest(lines):
+        if not ln.item:
+            out[-1] += r"\newline " + escape(ln.text)
+            continue
+        env = "enumerate" if ln.numbered else "itemize"
+        level = min(ln.level, len(stack))
+        while stack and (len(stack) > level + 1
+                         or (len(stack) == level + 1 and stack[-1] != env)):
+            out.append("  " * (len(stack) - 1) + "\\end{%s}" % stack.pop())
+        if len(stack) == level:
+            out.append("  " * level + "\\begin{%s}" % env + _TIGHT)
+            stack.append(env)
+        out.append("  " * len(stack) + r"\item " + escape(ln.text))
+    while stack:
+        out.append("  " * (len(stack) - 1) + "\\end{%s}" % stack.pop())
+    return "\n".join(out)
+
+
 def text_to_latex(text: str) -> str:
     """Blank lines separate paragraphs, single newlines are kept as line
-    breaks, and lines starting with -, * or • become a bullet list — the
-    way people type notes."""
+    breaks, and bullet / numbered items (see ``lists``) become nested
+    itemize / enumerate lists — the way people type notes."""
     out = []
-    for para in re.split(r"\n\s*\n", text.strip()):
+    for para in re.split(r"\n\s*\n", text.strip("\n")):
         parts: list[str] = []
         lines: list[str] = []
         items: list[str] = []
         for ln in [ln.rstrip() for ln in para.splitlines() if ln.strip()] + [""]:
-            bullet = bool(_BULLET_RE.match(ln))
-            if lines and (bullet or not ln):
+            listed = bool(ln) and is_list_line(ln, bool(items))
+            if lines and (listed or not ln):
                 parts.append("\\newline\n".join(lines))
                 lines = []
-            if items and not bullet:
-                parts.append(_ITEMIZE + "\n".join(items) + "\n\\end{itemize}")
+            if items and not listed:
+                parts.append(_list_latex(items))
                 items = []
-            if bullet:
-                items.append(r"  \item " + escape(_BULLET_RE.sub("", ln)))
+            if listed:
+                items.append(ln)
             elif ln:
-                lines.append(escape(ln))
+                lines.append(escape(ln.strip()))
         if parts:
             out.append("\n".join(parts))
     return "\n\n".join(out)
@@ -133,6 +153,12 @@ def _preamble(note: Note, layout: str, limit_pt: Optional[float]) -> str:
 \usepackage[hidelinks,bookmarksnumbered,bookmarksopen]{{hyperref}}
 \hypersetup{{pdftitle={{{escape(m.title)}}},pdfauthor={{{escape(m.speaker)}}},
   pdfcreator={{KherveNote}}}}
+\renewcommand\labelitemii{{\textbullet}}
+\renewcommand\labelitemiii{{\textbullet}}
+\renewcommand\labelitemiv{{\textbullet}}
+\renewcommand\labelenumii{{\arabic{{enumi}}.\arabic{{enumii}}.}}
+\renewcommand\labelenumiii{{\arabic{{enumi}}.\arabic{{enumii}}.\arabic{{enumiii}}.}}
+\renewcommand\labelenumiv{{\arabic{{enumi}}.\arabic{{enumii}}.\arabic{{enumiii}}.\arabic{{enumiv}}.}}
 \setlength{{\parindent}}{{0pt}}
 \setlength{{\parskip}}{{0.6em}}
 \definecolor{{knoteaccent}}{{HTML}}{{1A6DD8}}

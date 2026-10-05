@@ -2,7 +2,7 @@ import pytest
 
 from khervenote import compiler
 from khervenote.model import Note
-from khervenote.serializer import _ITEMIZE, escape, format_time, text_to_latex, to_latex
+from khervenote.serializer import _TIGHT, escape, format_time, text_to_latex, to_latex
 
 
 def _note():
@@ -10,7 +10,7 @@ def _note():
     n.meta.title, n.meta.speaker, n.meta.place = "Surface science", "Dr A", "Imperial"
     n.add_block("typed", "Opening remarks")
     n.add_section("XPS basics", t=60)
-    n.add_block("typed", "- binding energy\n- work function")
+    n.add_block("typed", "- binding energy\n  1. core levels\n  2. valence\n- work function")
     n.add_block("important", "Shirley background", t=75)
     n.add_block("question", "Why 1486.6 eV?")
     n.add_block("transcript", "so the photon comes in", t=3725)
@@ -29,15 +29,40 @@ def test_format_time():
     assert format_time(3725) == "1:02:05"
 
 
-def test_text_to_latex_paragraphs_lines_and_bullets():
-    out = text_to_latex("one\ntwo\n\n- a\n* b")
-    assert out == ("one\\newline\ntwo\n\n" + _ITEMIZE
-                   + "  \\item a\n  \\item b\n\\end{itemize}")
+def test_text_to_latex_paragraphs_and_lines():
+    assert text_to_latex("one\ntwo\n\nthree") == "one\\newline\ntwo\n\nthree"
 
 
 def test_bullets_inside_a_paragraph():
-    out = text_to_latex("intro\n- a\nafter")
-    assert out == ("intro\n" + _ITEMIZE + "  \\item a\n\\end{itemize}\nafter")
+    out = text_to_latex("intro\n- a\n* b\nafter")
+    assert out == ("intro\n\\begin{itemize}" + _TIGHT + "\n  \\item a\n  \\item b\n"
+                   "\\end{itemize}\nafter")
+
+
+def test_nested_numbered_and_bullet_items():
+    out = text_to_latex("1. one\n   - dot\n     2) deeper\n2. two\n    still two")
+    assert out == "\n".join([
+        "\\begin{enumerate}" + _TIGHT,
+        "  \\item one",
+        "  \\begin{itemize}" + _TIGHT,
+        "    \\item dot",
+        "    \\begin{enumerate}" + _TIGHT,
+        "      \\item deeper",
+        "    \\end{enumerate}",
+        "  \\end{itemize}",
+        "  \\item two\\newline still two",
+        "\\end{enumerate}"])
+
+
+def test_switching_kind_at_the_same_level_starts_a_new_list():
+    out = text_to_latex("- a\n1. b")
+    assert out.count("\\begin{itemize}") == 1 and out.count("\\begin{enumerate}") == 1
+    assert out.index("\\end{itemize}") < out.index("\\begin{enumerate}")
+
+
+def test_numbers_in_prose_are_not_items():
+    assert "itemize" not in text_to_latex("1.5 eV is the shift")
+    assert "enumerate" not in text_to_latex("In 2024 we saw")
 
 
 def test_untitled_first_section_has_no_heading():

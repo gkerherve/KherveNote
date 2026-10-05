@@ -127,6 +127,31 @@ def question() -> QIcon:
     return _done(px, p)
 
 
+def bullets() -> QIcon:
+    px, p = _canvas()
+    for y, x in ((6, 3), (12, 7), (18, 3)):
+        p.setPen(Qt.NoPen)
+        p.setBrush(ACCENT)
+        p.drawEllipse(QRectF(x, y - 1.6, 3.2, 3.2))
+        p.setPen(_pen(FG, 1.8))
+        p.drawLine(QPointF(x + 6, y), QPointF(21, y))
+    return _done(px, p)
+
+
+def numbering() -> QIcon:
+    px, p = _canvas()
+    f = QFont()
+    f.setPixelSize(7)
+    f.setBold(True)
+    p.setFont(f)
+    for y, x, label in ((6, 1, "1"), (12, 5, "1.1"), (18, 1, "2")):
+        p.setPen(ACCENT)
+        p.drawText(QRectF(x, y - 4, 10, 8), Qt.AlignLeft | Qt.AlignVCenter, label)
+        p.setPen(_pen(FG, 1.8))
+        p.drawLine(QPointF(x + (10 if len(label) > 1 else 6), y), QPointF(21, y))
+    return _done(px, p)
+
+
 def image() -> QIcon:
     px, p = _canvas()
     p.setPen(_pen(FG, 1.6))

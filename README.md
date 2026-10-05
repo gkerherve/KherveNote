@@ -8,11 +8,15 @@ pages for printing.
 Part of the [KherveTools](https://khervetools.com) family, alongside
 [KherveTeX](https://github.com/gkerherve/kherveTeX).
 
-## Using it (v0.1)
+## Using it
 
 - Type in the box at the bottom and press **Enter** — the note lands on
   the page with its time in the session. Shift+Enter for a new line;
   lines starting with `-` become bullets.
+- Lists: `- ` (or `*`, `•`) starts a bullet, `1. ` a numbered item. Shift+Enter
+  continues the list, **Tab** makes a sub-item (numbered sub-items read
+  1.1, 1.2, 1.2.1), Shift+Tab goes back, an empty item ends the list. The
+  **Bullets** / **Numbering** buttons turn the current line into an item.
 - **New section** (Ctrl+Return) starts a section now; right-click any
   note → *Start a section here* to start one after the fact.
 - **Key point** (Ctrl+Shift+K) and **Question** (Ctrl+Shift+Q) flag what

@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDockWidget, QFileDialog, QHBoxLayout, QLabel,
     QListWidget, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
     QToolBar, QVBoxLayout, QWidget,
 )
 
-from . import __version__, compiler, icons
+from . import __version__, compiler, icons, lists
 from .knote_file import EXTENSION, load_knote, save_knote
 from .live_page import LivePage
 from .model import Note
@@ -47,25 +47,75 @@ def version_string() -> str:
 
 class Composer(QPlainTextEdit):
     """Where notes are typed during the talk: Enter adds the note to the
-    page, Shift+Enter starts a new line."""
+    page, Shift+Enter starts a new line (continuing a list), Tab and
+    Shift+Tab indent and outdent a list item."""
 
     submitted = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setPlaceholderText("Type a note and press Enter  ·  Shift+Enter for a new line  ·  "
-                                "lines starting with - become bullets")
-        self.setFixedHeight(64)
+                                "- bullets, 1. numbers, Tab for sub-items")
+        self.setFixedHeight(84)
+
+    def _line(self) -> tuple[QTextCursor, str]:
+        cur = self.textCursor()
+        cur.movePosition(QTextCursor.StartOfBlock)
+        cur.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        return cur, cur.selectedText()
+
+    def _replace_line(self, text: str) -> None:
+        cur, _ = self._line()
+        cur.insertText(text)
+        self.setTextCursor(cur)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not (
-                event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)):
-            text = self.toPlainText().strip()
-            if text:
-                self.submitted.emit(text)
-                self.clear()
+        key, mods = event.key(), event.modifiers()
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if mods & Qt.ShiftModifier:
+                _, line = self._line()
+                item = lists.parse_item(line)
+                if item is not None and not item.text:
+                    self._replace_line("")      # an empty item ends the list
+                else:
+                    self.textCursor().insertText("\n" + (lists.continuation(line) or ""))
+                return
+            if not mods & (Qt.ControlModifier | Qt.MetaModifier):
+                text = self.toPlainText().strip("\n")
+                if text.strip():
+                    self.submitted.emit(text)
+                    self.clear()
+                return
+        if key == Qt.Key_Tab and not mods:
+            self.indent(1)
+            return
+        if key == Qt.Key_Backtab:
+            self.indent(-1)
             return
         super().keyPressEvent(event)
+
+    def indent(self, step: int) -> None:
+        _, line = self._line()
+        item = lists.parse_item(line)
+        body = line.lstrip(" \t")
+        width = lists.indent_of(line)
+        width = width + 2 if step > 0 else max(0, width - 2)
+        if item is not None and item.numbered:
+            # A new sub-list counts from 1 again.
+            body = f"1{item.marker[-1]} {item.text}"
+        self._replace_line(" " * width + body)
+
+    def toggle_marker(self, numbered: bool) -> None:
+        """Make the current line a bullet / numbered item, or plain again."""
+        _, line = self._line()
+        item = lists.parse_item(line)
+        lead = line[:len(line) - len(line.lstrip(" \t"))]
+        if item is not None and item.numbered == numbered:
+            self._replace_line(lead + item.text)
+        else:
+            text = item.text if item is not None else line.strip()
+            self._replace_line(lead + ("1. " if numbered else "- ") + text)
+        self.setFocus()
 
 
 class _CompileSignals(QObject):
@@ -160,6 +210,11 @@ class MainWindow(QMainWindow):
                          "Ctrl+Shift+K", icons.star(), "Type a key point (Ctrl+Shift+K)")
         self.act_question = A("&Question", lambda: self._compose_as("question"),
                               "Ctrl+Shift+Q", icons.question(), "Type a question (Ctrl+Shift+Q)")
+        self.act_bullets = A("&Bullets", lambda: self.composer.toggle_marker(False),
+                             "Ctrl+Shift+8", icons.bullets(), "Bullet list (Ctrl+Shift+8)")
+        self.act_numbers = A("N&umbering", lambda: self.composer.toggle_marker(True),
+                             "Ctrl+Shift+7", icons.numbering(),
+                             "Numbered list — Tab makes sub-items 1.1, 1.2 (Ctrl+Shift+7)")
         self.act_image = A("Insert &image…", self.insert_image, None, icons.image(),
                            "Insert a picture or slide screenshot")
         self.act_paste_image = A("&Paste image", self.paste_image, "Ctrl+Shift+V", None,
@@ -191,7 +246,7 @@ class MainWindow(QMainWindow):
         m.addAction(A("&Quit", self.close, QKeySequence.Quit))
         m = mb.addMenu("&Note")
         for a in (self.act_listen, self.act_section, self.act_key, self.act_question,
-                  self.act_image, self.act_paste_image):
+                  self.act_bullets, self.act_numbers, self.act_image, self.act_paste_image):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.act_clock)
@@ -206,7 +261,8 @@ class MainWindow(QMainWindow):
         tb.setObjectName("main")
         tb.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         for a in (self.act_new, self.act_open, self.act_save, None, self.act_listen,
-                  self.act_section, self.act_key, self.act_question, self.act_image,
+                  self.act_section, self.act_key, self.act_question, self.act_bullets,
+                  self.act_numbers, self.act_image,
                   None, self.act_pdf, self.act_tex):
             tb.addSeparator() if a is None else tb.addAction(a)
         self.addToolBar(tb)
