@@ -884,13 +884,15 @@ class NoteEditor(QTextEdit):
     def _attachment_menu(self, chip, global_pos) -> None:
         path, name = chip
         menu = QMenu(self)
-        for label, action in (("Open in the Document panel", "open"),
+        is_pdf = name.lower().endswith(".pdf")
+        for label, action in (("Open in KhervePDF" if is_pdf else "Open", "open"),
+                              ("Document panel — sections, find, ask", "panel"),
                               ("Summarise the document", "summarise"),
                               ("Summarise every section", "summarise_sections"),
                               ("Find in it…", "find"),
                               ("Ask the AI about it…", "ask"),
                               (None, None),
-                              ("Open with its own app", "open_file")):
+                              ("Open with the computer's default app", "open_file")):
             if label is None:
                 menu.addSeparator()
             else:
@@ -1053,8 +1055,9 @@ def _write_block(editor: NoteEditor, cur: QTextCursor, b: Block, new: bool) -> N
         fmt.setName(res)
         fmt.setWidth(img.width() / img.devicePixelRatio())
         fmt.setHeight(img.height() / img.devicePixelRatio())
-        fmt.setToolTip(f"{b.text} — click to open it; right-click for summaries, "
-                       "sections and search")
+        fmt.setToolTip(f"{b.text} — click to open it"
+                       + (" in KhervePDF" if b.text.lower().endswith(".pdf") else "")
+                       + "; right-click for summaries, sections, search and questions")
         cur.insertImage(fmt)
         return
     if b.kind == "image":

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QDate, QEvent, QEventLoop, QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, QEvent, QEventLoop, QFileSystemWatcher, QObject, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction, QActionGroup, QDesktopServices, QImage, QKeySequence, QTextCursor,
 )
@@ -25,7 +25,9 @@ from PySide6.QtWidgets import (
     QMenu, QProgressBar, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from . import __version__, compiler, documents, history, icons, library, local_ai, theme
+from . import (
+    __version__, compiler, documents, history, icons, khervepdf_link, library, local_ai, theme,
+)
 from .editor import (
     STYLES, NoteEditor, block_kind, document_to_note, insert_section, load_note,
 )
@@ -273,6 +275,9 @@ class MainWindow(QMainWindow):
         self.editor.cursorPositionChanged.connect(self._corr_timer.start)
         self.editor.time_label = self._time_label
         self._docs: dict[str, object] = {}
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.fileChanged.connect(self._attachment_changed)
+        self._watched: dict[str, str] = {}
         self._doc_att: Optional[Attachment] = None
         self.header.drop_hint.clicked.connect(self.attach_dialog)
         self.editor.attachment_action.connect(self._attachment_action)
@@ -280,7 +285,8 @@ class MainWindow(QMainWindow):
         self.doc_panel.summarise_all.connect(self._doc_summarise_sections)
         self.setAcceptDrops(True)
         self.doc_panel.open_file.connect(
-            lambda: self._doc_att and self._open_attachment_file(self._doc_att))
+            lambda: self._doc_att and self._attachment_action("open", self._doc_att.path,
+                                                              self._doc_att.name))
         self.doc_panel.directions.setPlainText(self.settings.value("ai/directions", ""))
         self.doc_panel.directions.textChanged.connect(lambda: self.settings.setValue(
             "ai/directions", self.doc_panel.directions_text()))
@@ -453,6 +459,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(A("Earlier &versions of this note…", self.show_versions, None,
                       "Every note keeps its earlier versions — open one as a copy"))
+        m.addAction(A("Where is &KhervePDF…", self.locate_khervepdf, None,
+                      "PDFs in notes open in KhervePDF; show KherveNote where it is"))
         m.addAction(A("Notes &folder…", self.choose_library, None,
                       "Where all notes are kept (the Notes panel shows this folder)"))
         m.addSeparator()
@@ -801,6 +809,9 @@ class MainWindow(QMainWindow):
         self.header.load(note)
         self._docs.clear()
         self._doc_att = None
+        if self._watcher.files():
+            self._watcher.removePaths(self._watcher.files())
+        self._watched.clear()
         self.doc_dock.hide()
         load_note(self.editor, note)
         self.speech.set_segments(note.transcript, self._time_label)
@@ -1345,8 +1356,11 @@ class MainWindow(QMainWindow):
                 shutil.copyfile(path, dest)
                 self.editor.insert_image(rel, QImage(str(dest)))
             elif documents.kind_of(path) and path.is_file():
-                rel, _ = self._new_asset(path.suffix.lower())
-                rel = rel.replace("assets/", "assets/att-")
+                # Kept under its own name, so KhervePDF and other apps show
+                # "Manual.pdf" rather than a made-up one.
+                rel = f"assets/att-{uuid.uuid4().hex[:10]}/{library.safe_name(path.stem)}" \
+                      f"{path.suffix.lower()}"
+                (self.work_dir / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, self.work_dir / rel)
                 self.editor.insert_attachment(rel, path.name)
                 attached.append(Attachment(rel, path.name))
@@ -1377,6 +1391,12 @@ class MainWindow(QMainWindow):
         if action == "open_file":
             self._open_attachment_file(att)
             return
+        if action == "open":
+            if name.lower().endswith(".pdf"):
+                self.open_in_khervepdf(att)
+            else:
+                self._open_attachment_file(att, watch=True)
+            return
         then = {
             "summarise": lambda doc: self._doc_summarise(),
             "summarise_sections": lambda doc: self._doc_summarise_sections(),
@@ -1385,12 +1405,81 @@ class MainWindow(QMainWindow):
         }.get(action)
         self.show_document(att, then)
 
-    def _open_attachment_file(self, att: Attachment) -> None:
-        # A copy named as the user knows it, so the other app shows a
-        # sensible title.
-        view = self.work_dir / "open" / att.name
-        view.parent.mkdir(exist_ok=True)
-        shutil.copyfile(self.work_dir / att.path, view)
+    def _view_path(self, att: Attachment) -> Path:
+        """The file another app opens: the note's own copy when it already
+        has the document's name, else a copy under that name, watched so
+        changes saved there come back into the note."""
+        asset = self.work_dir / att.path
+        if asset.name == att.name:
+            view = asset
+        else:
+            view = self.work_dir / "open" / att.path.replace("/", "_") / att.name
+            view.parent.mkdir(parents=True, exist_ok=True)
+            if not view.exists():
+                shutil.copyfile(asset, view)
+        self._watched[str(view)] = att.path
+        if str(view) not in self._watcher.files():
+            self._watcher.addPath(str(view))
+        return view
+
+    def _attachment_changed(self, view: str) -> None:
+        """A watched document was saved by another app (annotations in
+        KhervePDF, say): take the new version into the note."""
+        rel = self._watched.get(view)
+        if rel is None:
+            return
+        src = Path(view)
+        if not src.exists():          # saved by replacing the file: wait for it
+            QTimer.singleShot(300, lambda: self._attachment_changed(view))
+            return
+        if str(src) not in self._watcher.files():
+            self._watcher.addPath(str(src))
+        asset = self.work_dir / rel
+        if src != asset:
+            shutil.copyfile(src, asset)
+        self._docs.pop(rel, None)
+        self._header_changed()
+        self.statusBar().showMessage(f"{src.name} was changed in another app — kept in this "
+                                     "note", 6000)
+
+    def open_in_khervepdf(self, att: Attachment) -> None:
+        view = self._view_path(att)
+        how = khervepdf_link.open_pdf(str(view), self.settings.value("pdf/khervepdf", ""))
+        if how == "running":
+            self.statusBar().showMessage(f"{att.name} opened in KhervePDF", 5000)
+        elif how == "started":
+            self.statusBar().showMessage(f"Starting KhervePDF with {att.name}…", 8000)
+        else:
+            box = QMessageBox(QMessageBox.Information, "KhervePDF", (
+                "KhervePDF, the KherveTools PDF viewer, was not found on this computer.\n\n"
+                "Show KherveNote where it is (the KhervePDF app, or its folder), or open "
+                "the PDF with the computer's default viewer."), parent=self)
+            locate = box.addButton("Where is KhervePDF…", QMessageBox.ActionRole)
+            default = box.addButton("Default viewer", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() is locate and self.locate_khervepdf():
+                self.open_in_khervepdf(att)
+            elif box.clickedButton() is default:
+                self._open_attachment_file(att, watch=True)
+
+    def locate_khervepdf(self) -> bool:
+        path = QFileDialog.getExistingDirectory(
+            self, "Where is KhervePDF? (the KhervePDF app, or its folder)", "/Applications")
+        if not path:
+            return False
+        self.settings.setValue("pdf/khervepdf", path)
+        return True
+
+    def _open_attachment_file(self, att: Attachment, watch: bool = False) -> None:
+        if watch:
+            view = self._view_path(att)
+        else:
+            # A copy named as the user knows it, so the other app shows a
+            # sensible title.
+            view = self.work_dir / "open" / att.name
+            view.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.work_dir / att.path, view)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(view)))
 
     def show_document(self, att: Attachment, then=None) -> None:

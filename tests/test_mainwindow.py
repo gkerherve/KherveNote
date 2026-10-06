@@ -357,3 +357,33 @@ def test_example_notes_are_installed_and_listed(win, tmp_path):
     assert "$" in win.editor.toPlainText()
     labels = [i.text(0) for i in win.library._all_items()]
     assert "Examples" in labels
+
+
+def test_clicking_a_pdf_opens_khervepdf_and_its_saves_come_back(win, tmp_path, monkeypatch, app):
+    import time
+
+    from khervenote import khervepdf_link
+    src = tmp_path / "Handbook.pdf"
+    src.write_bytes(b"%PDF-1.4 original")
+    win.add_files([str(src)])
+    path, name = win.editor.attachments()[0]
+    assert name == "Handbook.pdf" and path.endswith("/Handbook.pdf")
+    opened = []
+    monkeypatch.setattr(khervepdf_link, "open_pdf",
+                        lambda p, configured="": (opened.append(p), "running")[1])
+    win._attachment_action("open", path, name)
+    assert opened and opened[0].endswith("Handbook.pdf")
+    assert opened[0] == str(win.work_dir / path)        # the note's own copy
+    win._mark_clean()
+    with open(opened[0], "ab") as fh:                    # annotated and saved there
+        fh.write(b" annotated")
+    t = time.time()
+    while not win.dirty and time.time() - t < 3:
+        app.processEvents()
+        time.sleep(0.02)
+    assert win.dirty
+    win.autosave()
+    from khervenote.knote_file import load_knote
+    back = load_knote(win.path, tmp_path / "check")
+    assert (tmp_path / "check" / path).read_bytes().endswith(b"annotated")
+    assert back.attachments[0].name == "Handbook.pdf"

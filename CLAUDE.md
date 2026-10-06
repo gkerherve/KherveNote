@@ -112,7 +112,8 @@ stack. Consequences that must hold for anything added to the template:
 | Sections | Section suggestions: silence + cue phrases, then semantic | later |
 | Documents | Attach PDF / Word / PowerPoint; sections, find, summarise, ask the AI | done (0.12) |
 | Links | Open in KherveTeX, KherveRef citations | later |
-| Release | Installers with tectonic, warmed cache and a Whisper model | later |
+| KhervePDF | PDFs in notes open in KhervePDF; its saved annotations stay in the note | done (0.20) |
+| Release | Installers with tectonic, warmed cache, a Whisper model and KhervePDF | later |
 
 Attached documents sit **in the page** as an inline icon (an image whose
 resource name is `knote-attachment:<path>|<name>`, drawn by
@@ -124,6 +125,16 @@ never share text (a PDF's bookmarks are cut where their title is
 printed). Questions send only the best-matching passages (BM25, ~9000
 characters) and long summaries go part by part, so a small local model
 copes with a long manual; `num_ctx` is raised to fit.
+
+PDFs open in **KhervePDF** (sibling repo `../KhervePDF`; `khervepdf_link.py`).
+The contract is KhervePDF's single-instance channel — a JSON line
+`{"cmd": "open", "paths": [...]}` on the local socket `khervepdf-<user>`
+(`KHERVEPDF_IPC_NAME` overrides it in tests) — else KhervePDF is started
+(installed app, `pdf/khervepdf` setting, or the sibling checkout with its
+`.venv`). Never import KhervePDF. It opens the note's own copy of the
+file (new attachments live at `assets/att-<id>/<Name>.pdf`), watched with
+`QFileSystemWatcher` so annotations saved there return into the note.
+The release installers must ship KhervePDF with KherveNote.
 
 The local AI (`local_ai.py`) talks to Ollama over plain HTTP
 (`OLLAMA_HOST`, default `localhost:11434`) and sends `think: false` so

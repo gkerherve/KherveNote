@@ -287,10 +287,20 @@ The document appears **as an icon in the note**, where you dropped it,
 and is kept inside the note file. While a note has no document, a
 dashed "Drag a PDF…" line under the title is a reminder.
 
-**Click the icon** to open the **Document** panel on the right.
-**Right-click it** for *Summarise the document*, *Summarise every
-section*, *Find in it…*, *Ask the AI about it…*, *Open with its own
-app* and *Remove from the note*.
+**Click a PDF's icon** to open it in **KhervePDF**, the KherveTools PDF
+viewer — to read it, highlight, annotate and sign. If KhervePDF is
+already open, the PDF arrives as a new tab there. KhervePDF works on the
+note's own copy: annotations you **save in KhervePDF are kept in the
+note** (save there before you switch to another note). Word, PowerPoint
+and text documents open in their usual app the same way.
+
+If KhervePDF is not found, KherveNote asks where it is (*File ▸ Where is
+KhervePDF…*) or opens the computer's default viewer instead.
+
+**Right-click the icon** for the **Document panel** (sections, find,
+ask), *Summarise the document*, *Summarise every section*, *Find in
+it…*, *Ask the AI about it…*, *Open with the computer's default app* and
+*Remove from the note*.
 
 In the Document panel:
 

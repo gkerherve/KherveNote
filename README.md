@@ -57,10 +57,11 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   to it, installs a model in one click and compares them (Qwen, Granite,
   Gemma, Llama).
 - **Documents**: drag a PDF, Word, PowerPoint or text file onto the page
-  (or **Insert PDF**). It sits in the note as an icon; click it for its
-  sections, a search through it, a summary of the whole or of every
-  section, or a question to the local AI — answers are written into the
-  note as sections, with pages.
+  (or **Insert PDF**). It sits in the note as an icon; click a PDF to open
+  it in [KhervePDF](https://github.com/gkerherve/KhervePDF) (annotations
+  saved there stay in the note); right-click for its sections, a search
+  through it, a summary of the whole or of every section, or a question
+  to the local AI — answers are written into the note as sections.
 - **Images**: the toolbar button, or paste a screenshot with Ctrl+V.
 - **Camera** (Ctrl+Shift+P): take a picture of a whiteboard, a slide or
   a handout with the computer's camera; Space takes it.
