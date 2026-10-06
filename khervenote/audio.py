@@ -183,6 +183,9 @@ class Recorder:
             try:
                 self._file.write(frames)
                 self.frames_written += len(frames)
+                if self.frames_written % RATE < len(frames):
+                    # About once a second: a crash then loses at most that.
+                    self._file.flush()
                 self.on_level(rms(frames))
                 self.on_frames(frames)
             except Exception as exc:  # noqa: BLE001 — keep recording what we can

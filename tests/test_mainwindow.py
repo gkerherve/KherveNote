@@ -258,7 +258,8 @@ def test_leaving_a_note_finishes_listening_into_that_note(win, tmp_path):
     assert win.session is None
     from khervenote.knote_file import load_knote
     saved = load_knote(first, tmp_path / "check")
-    assert [r.path for r in saved.recordings] == ["assets/rec-1.ogg"]
+    assert len(saved.recordings) == 1
+    assert (tmp_path / "check" / saved.recordings[0].path).read_bytes() == b"ogg"
     assert win.note.recordings == []
 
 
@@ -387,3 +388,43 @@ def test_clicking_a_pdf_opens_khervepdf_and_its_saves_come_back(win, tmp_path, m
     back = load_knote(win.path, tmp_path / "check")
     assert (tmp_path / "check" / path).read_bytes().endswith(b"annotated")
     assert back.attachments[0].name == "Handbook.pdf"
+
+
+def test_a_recording_left_by_a_crash_is_offered_back(win, tmp_path, monkeypatch):
+    from khervenote import recovery
+    from khervenote.knote_file import load_knote
+    QTest.keyClicks(win.editor, "lecture notes")
+    win.autosave()
+    note_path = win.path
+    audio = recovery.begin(win.note.meta.id, str(note_path), "Lecture", 120.0)
+    audio.write_bytes(b"x" * 5000)                  # what the crash left
+    chosen = {}
+
+    class Box:
+        AcceptRole = ActionRole = DestructiveRole = RejectRole = 0
+        Warning = 0
+
+        def __init__(self, *a, **k):
+            self.buttons = []
+
+        def addButton(self, text, role):
+            self.buttons.append(text)
+            return text
+
+        def exec(self):
+            chosen["buttons"] = list(self.buttons)
+
+        def clickedButton(self):
+            return self.buttons[0]                    # "Add it to …"
+    from khervenote import mainwindow
+    monkeypatch.setattr(mainwindow, "QMessageBox", Box)
+    win.offer_recovery()
+    assert chosen["buttons"][0].startswith("Add it to")
+    saved = load_knote(note_path, tmp_path / "check")
+    assert len(saved.recordings) == 1 and saved.recordings[0].t0 == 120.0
+    assert not audio.parent.exists() and recovery.pending() == []
+
+
+def test_a_note_with_only_speech_is_saved(win, tmp_path):
+    win._on_speech("only speech so far", 3.0)
+    assert win.autosave() and win.path is not None and win.path.exists()

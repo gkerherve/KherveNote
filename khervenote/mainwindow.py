@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QDate, QEvent, QEventLoop, QFileSystemWatcher, QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, QEvent, QEventLoop, QFile, QFileSystemWatcher, QObject, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction, QActionGroup, QDesktopServices, QImage, QKeySequence, QTextCursor,
 )
@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import (
-    __version__, compiler, documents, history, icons, khervepdf_link, library, local_ai, theme,
+    __version__, compiler, documents, history, icons, khervepdf_link, library, local_ai, recovery,
+    theme,
 )
 from .editor import (
     STYLES, NoteEditor, block_kind, document_to_note, insert_section, load_note,
@@ -298,6 +299,7 @@ class MainWindow(QMainWindow):
         self.editor.files_dropped.connect(self.add_files)
         self._new_note_folder: Optional[Path] = None
         self._disk_mtime: Optional[float] = None
+        self._unsaved_recordings: list[Path] = []
         self._autosave_timer = QTimer(self, singleShot=True, interval=2000)
         self._autosave_timer.timeout.connect(self.autosave)
 
@@ -335,6 +337,7 @@ class MainWindow(QMainWindow):
             self.open_path(last)
         else:
             self._set_note(Note.new())
+        QTimer.singleShot(400, self.offer_recovery)
 
     # ── actions ────────────────────────────────────────────────────
 
@@ -894,11 +897,13 @@ class MainWindow(QMainWindow):
         model = self.settings.value("speech/model", DEFAULT_MODEL)
         if self._engine is not None and self._engine[0] != model:
             self._engine = None
-        (self.work_dir / "assets").mkdir(exist_ok=True)
-        path = self.work_dir / f"assets/rec-{uuid.uuid4().hex[:10]}.ogg"
         device_name = self.settings.value("speech/device", "")
         device = next((i for i, n in input_devices() if n == device_name), None)
         t0 = self.note.elapsed() or 0.0
+        # Recorded outside the note's temporary folder, so a crash cannot
+        # lose it (see recovery.py).
+        path = recovery.begin(self.note.meta.id, str(self.path or ""),
+                              self.header.title.text().strip(), t0)
         self.session = ListenSession(str(path), t0, model,
                                      self.settings.value("speech/language", ""), device, self,
                                      engine=self._engine[1] if self._engine else None,
@@ -1005,6 +1010,56 @@ class MainWindow(QMainWindow):
             self._stop_listening()
             QMessageBox.warning(self, "Listen", message)
 
+    def offer_recovery(self) -> None:
+        """Recordings a crash left behind: put each back into its note,
+        keep it as a new note, or move it to the Trash."""
+        busy = (Path(self.session.audio_path),) if self.session is not None else ()
+        for p in recovery.pending(exclude=busy):
+            when = p.when
+            secs = int(recovery.duration(p.audio))
+            title = p.note_title or (Path(p.note_path).stem if p.note_path else "")
+            box = QMessageBox(QMessageBox.Warning, "Recovered recording", (
+                "KherveNote stopped while it was recording"
+                + (f" on {when:%d %B at %H:%M}" if when else "")
+                + f" — {secs // 60} min {secs % 60:02d} s were kept.\n\n"
+                "What was transcribed before it stopped is in the note already; this puts "
+                "the recording back with it."), parent=self)
+            into = None
+            if p.note_path and Path(p.note_path).is_file():
+                into = box.addButton(f"Add it to “{title or 'its note'}”",
+                                     QMessageBox.AcceptRole)
+            new = box.addButton("Keep it as a new note", QMessageBox.ActionRole)
+            trash = box.addButton("Move it to the Trash", QMessageBox.DestructiveRole)
+            later = box.addButton("Ask me later", QMessageBox.RejectRole)
+            box.exec()
+            chosen = box.clickedButton()
+            if chosen is later:
+                continue
+            if chosen is trash:
+                QFile.moveToTrash(str(p.folder))
+                continue
+            if not self._flush():
+                return
+            if chosen is into:
+                self.open_path(Path(p.note_path))
+            else:
+                self._fresh_work_dir()
+                note = Note.new(when)
+                note.meta.title = f"Recovered recording — {title}" if title else \
+                    "Recovered recording"
+                self._new_note_folder = self.library.root
+                self._set_note(note)
+                self.header.load(note)
+            rel = f"assets/rec-{uuid.uuid4().hex[:10]}{p.audio.suffix}"
+            (self.work_dir / "assets").mkdir(exist_ok=True)
+            shutil.copyfile(p.audio, self.work_dir / rel)
+            t0 = p.t0 if chosen is into else 0.0
+            self.note.recordings.append(Recording(rel, t0, float(secs)))
+            self._header_dirty = True
+            if self.save():
+                recovery.finish(p.audio)
+                self.statusBar().showMessage("The recording is back in the note.", 8000)
+
     def _finish_listening(self) -> None:
         session = self.session
         if session is None:
@@ -1027,10 +1082,16 @@ class MainWindow(QMainWindow):
         self.speech.set_state("Stopped. Press Listen to carry on — the new lines are added "
                               "below.")
         path = Path(session.audio_path)
-        if path.exists() and session.duration > 0 and self.work_dir in path.parents:
-            rel = path.relative_to(self.work_dir).as_posix()
+        if path.exists() and session.duration > 0:
+            rel = f"assets/rec-{uuid.uuid4().hex[:10]}{path.suffix}"
+            (self.work_dir / "assets").mkdir(exist_ok=True)
+            shutil.copyfile(path, self.work_dir / rel)
             self.note.recordings.append(Recording(rel, session.t0, session.duration))
+            # The safe copy goes once the note holding it is saved.
+            self._unsaved_recordings.append(path)
             self._header_changed()
+        elif path.exists():
+            recovery.finish(path)
         if self.session is session:
             self.session = None
         self.statusBar().showMessage("Stopped listening", 4000)
@@ -1094,6 +1155,7 @@ class MainWindow(QMainWindow):
 
     def _is_blank(self) -> bool:
         return (not self.header.title.text().strip() and not self.note.recordings
+                and not self.note.transcript
                 and not self.editor.document().toPlainText().strip()
                 and not self.header.summary.toPlainText().strip())
 
@@ -1175,6 +1237,12 @@ class MainWindow(QMainWindow):
             return False
         self._name_after_title()
         self._disk_mtime = self.path.stat().st_mtime
+        for rec in self._unsaved_recordings:
+            recovery.finish(rec)
+        self._unsaved_recordings.clear()
+        if self.session is not None:
+            recovery.set_note(Path(self.session.audio_path), str(self.path),
+                              self.header.title.text().strip())
         self.library.set_pending(None)
         self._mark_clean()
         self.settings.setValue("library/last", str(self.path))

@@ -75,7 +75,10 @@ the user's request.
   instead). Only one KherveNote runs at a time (`QLockFile` in
   `__main__`). Leaving a note finishes listening and stops the AI first;
   an AI answer for a note that is no longer open is dropped, never
-  written into another note.
+  written into another note. Recordings are written (flushed each
+  second) to `recovery.recovery_dir()`, not the note's temporary folder,
+  and that copy is deleted only after the note holding it is saved; the
+  next start offers any left behind. Tests set `KHERVENOTE_RECOVERY_DIR`.
 - The page is one seamless surface: no page edges, borders or desk
   colour around the text.
 

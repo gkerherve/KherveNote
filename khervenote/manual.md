@@ -54,6 +54,12 @@ words.
 - **Changed elsewhere?** If a note's file was changed outside this window
   (by a sync program, say), KherveNote does not save over it: your
   version is saved as a separate copy next to it, and you are told.
+- **A crash while listening loses nothing.** The recording is written,
+  second by second, to a safe folder of its own, and the transcript is
+  saved with the note as it comes. If KherveNote or the computer stops
+  in the middle of a talk, the next start says so and offers to **add
+  the recording back to its note**, keep it as a new note, or move it to
+  the Trash.
 - **Leaving a note** (opening another, *+ Note*, quitting) first finishes
   any listening — the last words and the recording stay with that note —
   and stops any AI that was writing into it.
