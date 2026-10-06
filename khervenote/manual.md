@@ -157,6 +157,14 @@ a word, a number or a name. Right-click a line for *Hear this line* or
 playing, with *Pause* and *Stop*. Lines from the recording still going
 on can be played too.
 
+**Correct the speech.** Double-click a line (or right-click ▸ *Correct
+this line…*) to fix misheard words — *▶ Hear it* plays the line while
+you type. If the correction brings in a new technical term ("ToF-SIMS"),
+it is added to the talk's words, so it is heard right from then on.
+*Delete this line* removes noise or a stray "Thank you"; right-click ▸
+*Undo the last change to the speech* takes back corrections and
+deletions. The AI and the PDF use the corrected text.
+
 **The two are linked by time:**
 
 - Click in a paragraph of your notes: the speech said **before** you wrote

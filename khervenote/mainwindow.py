@@ -39,7 +39,7 @@ from .audio import input_devices
 from .ai_status import AIStatusBar
 from .document_panel import DocumentPanel, DropHint
 from .player import LinePlayer
-from .speech_panel import SpeechPanel
+from .speech_panel import LineEditor, SpeechPanel
 from .speech_range import SpeechRangeDialog
 from .model import Attachment, Recording, Segment, markdown_blocks
 from .permissions import with_permission
@@ -276,6 +276,11 @@ class MainWindow(QMainWindow):
         self.player = LinePlayer(self)
         self.speech.playable = lambda t: self._audio_at(t) is not None
         self.speech.play_requested.connect(self.play_speech)
+        self.speech.edit_requested.connect(self.correct_speech)
+        self.speech.delete_requested.connect(self.delete_speech)
+        self.speech.undo_requested.connect(self.undo_speech)
+        #: (index, the line before the change or None if it was added)
+        self._speech_undo: list[tuple[int, Optional[Segment]]] = []
         self.player.state.connect(self.speech.show_playing)
         self.speech.pause_btn.clicked.connect(self.player.toggle)
         self.speech.stop_btn.clicked.connect(lambda: (self.player.stop(),
@@ -819,6 +824,8 @@ class MainWindow(QMainWindow):
         self.header.load(note)
         self.player.release()
         self.speech.show_playing(False, "")
+        self._speech_undo = []
+        self.speech.can_undo = False
         self._docs.clear()
         self._doc_att = None
         if self._watcher.files():
@@ -1742,6 +1749,59 @@ class MainWindow(QMainWindow):
             nxt = segs[index + 1].t if index + 1 < len(segs) else None
             end = (nxt - t0 + 0.2) if nxt is not None and nxt - seg.t < 30 else start + 15
         self.player.play(str(path), start, end, f"{self._time_label(seg.t)}  {seg.text[:60]}")
+
+    # ── correcting the speech ──────────────────────────────────────
+
+    def correct_speech(self, index: int) -> None:
+        segs = self.note.transcript
+        if not 0 <= index < len(segs):
+            return
+        seg = segs[index]
+        dlg = LineEditor(self._time_label(seg.t), seg.text,
+                         self._audio_at(seg.t) is not None,
+                         lambda: self.play_speech(index, False), self)
+        if not dlg.exec() or not dlg.text() or dlg.text() == seg.text:
+            return
+        self.set_speech_line(index, dlg.text())
+
+    def set_speech_line(self, index: int, text: str) -> None:
+        """Replace what line *index* says — and learn any new terms from
+        the correction for the talk's word list."""
+        seg = self.note.transcript[index]
+        self._speech_undo.append((index, Segment(seg.t, seg.text)))
+        learnt = [w for w in vocabulary.suggest([text], known=self.note.meta.vocabulary)
+                  if w not in vocabulary.suggest([seg.text])]
+        seg.text = text
+        self._speech_changed()
+        if learnt:
+            words = vocabulary.merge(self.note.meta.vocabulary, learnt)
+            self.speech.set_vocabulary(words)
+            self._set_vocabulary(words)
+            self.statusBar().showMessage(
+                f"Corrected — and added {', '.join(learnt)} to the words of this talk, so "
+                "they are heard right from now on.", 8000)
+
+    def delete_speech(self, index: int) -> None:
+        if 0 <= index < len(self.note.transcript):
+            self._speech_undo.append((index, self.note.transcript.pop(index)))
+            self._speech_changed()
+            self.statusBar().showMessage("Line deleted — right-click the speech to undo.", 6000)
+
+    def undo_speech(self) -> None:
+        if not self._speech_undo:
+            return
+        index, before = self._speech_undo.pop()
+        segs = self.note.transcript
+        if before is not None and index < len(segs) and segs[index].t == before.t:
+            segs[index].text = before.text           # undo a correction
+        elif before is not None:
+            segs.insert(index, before)               # undo a deletion
+        self._speech_changed()
+
+    def _speech_changed(self) -> None:
+        self.speech.can_undo = bool(self._speech_undo)
+        self.speech.render()
+        self._header_changed()
 
     def _set_vocabulary(self, words: str) -> None:
         self.note.meta.vocabulary = words

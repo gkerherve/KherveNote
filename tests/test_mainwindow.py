@@ -469,3 +469,49 @@ def test_a_speech_line_can_be_heard(win, tmp_path, app):
     assert 0.4 <= win.player.position_s() <= 2.0      # from just before 101 s, not 0
     assert win.speech.play_bar.isVisible() or not win.isVisible()
     win.player.stop()
+
+
+def test_correcting_deleting_and_undoing_speech_lines(win, tmp_path):
+    from khervenote.model import Segment
+    win.note.transcript = [Segment(10.0, "measured with two F-SIMs"), Segment(20.0, "Thank you."),
+                           Segment(30.0, "the end")]
+    win.speech.set_segments(win.note.transcript, win._time_label)
+    win.set_speech_line(0, "measured with ToF-SIMS")
+    assert win.note.transcript[0].text == "measured with ToF-SIMS"
+    assert "ToF-SIMS" in win.note.meta.vocabulary          # learnt for next time
+    assert "ToF-SIMS" in win.speech.view.toPlainText()
+    win.delete_speech(1)
+    assert [g.text for g in win.note.transcript] == ["measured with ToF-SIMS", "the end"]
+    assert win.speech.can_undo
+    win.undo_speech()                                       # the deletion
+    assert [g.t for g in win.note.transcript] == [10.0, 20.0, 30.0]
+    win.undo_speech()                                       # the correction
+    assert win.note.transcript[0].text == "measured with two F-SIMs"
+    assert not win.speech.can_undo
+    win.autosave()
+    from khervenote.knote_file import load_knote
+    assert load_knote(win.path, tmp_path / "c").transcript[0].text == "measured with two F-SIMs"
+
+
+def test_double_clicking_a_line_opens_the_corrector(win, monkeypatch, app):
+    from khervenote import mainwindow
+    from khervenote.model import Segment
+    opened = []
+
+    class Editor:
+        def __init__(self, when, text, can_play, play, parent=None):
+            opened.append((when, text))
+
+        def exec(self):
+            return True
+
+        def text(self):
+            return "corrected words"
+    monkeypatch.setattr(mainwindow, "LineEditor", Editor)
+    win.note.transcript = [Segment(5.0, "misheard words")]
+    win.speech.set_segments(win.note.transcript, win._time_label)
+    win.show()
+    app.processEvents()
+    win.speech.edit_requested.emit(0)
+    assert opened and opened[0][1] == "misheard words"
+    assert win.note.transcript[0].text == "corrected words"

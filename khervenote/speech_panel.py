@@ -11,9 +11,9 @@ from __future__ import annotations
 import html
 from typing import Callable, Optional
 
-from PySide6.QtCore import QUrl, Qt, Signal
+from PySide6.QtCore import QEvent, QUrl, Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QTextBrowser, QToolButton, QVBoxLayout,
+    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QTextBrowser, QToolButton, QVBoxLayout,
     QWidget,
 )
 
@@ -31,6 +31,10 @@ class SpeechPanel(QWidget):
     fill_section_requested = Signal()
     #: Play line *i* (False) or from line *i* on (True).
     play_requested = Signal(int, bool)
+    #: Correct (edit) or delete line *i*; undo the last such change.
+    edit_requested = Signal(int)
+    delete_requested = Signal(int)
+    undo_requested = Signal()
     #: The talk's own words (names, acronyms, terms) were edited.
     vocabulary_changed = Signal(str)
     suggest_requested = Signal()
@@ -76,6 +80,9 @@ class SpeechPanel(QWidget):
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._menu)
         self.view.document().setDocumentMargin(8)
+        self.view.viewport().installEventFilter(self)
+        #: Whether there is a speech change to undo (set by the window).
+        self.can_undo = False
 
         self.play_bar = QWidget()
         self.play_label = QLabel()
@@ -237,6 +244,14 @@ class SpeechPanel(QWidget):
         if seg is not None:
             self.jump_requested.emit(seg.t)
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.view.viewport() and event.type() == QEvent.MouseButtonDblClick:
+            seg = self._segment_at(event.position().toPoint())
+            if seg is not None:
+                self.edit_requested.emit(self.segments.index(seg))
+                return True
+        return super().eventFilter(obj, event)
+
     def show_playing(self, playing: bool, label: str) -> None:
         self.play_bar.setVisible(playing or bool(label))
         self.play_label.setText(("▶ " if playing else "❚❚ ") + label)
@@ -274,12 +289,46 @@ class SpeechPanel(QWidget):
             menu.addAction("Play from here", lambda: self.play_requested.emit(i, True))
             menu.addSeparator()
         if seg is not None:
+            i = self.segments.index(seg)
+            menu.addAction("Correct this line…", lambda: self.edit_requested.emit(i))
+            menu.addAction("Delete this line", lambda: self.delete_requested.emit(i))
+            menu.addSeparator()
             menu.addAction(f"Insert this line into my notes",
                            lambda: self.insert_requested.emit(seg.text, seg.t))
             menu.addAction(f"Show my notes at {self.label(seg.t)}",
                            lambda: self.jump_requested.emit(seg.t))
+        if self.can_undo:
+            menu.addAction("Undo the last change to the speech", self.undo_requested)
         if not menu.isEmpty():
             menu.addSeparator()
         menu.addAction("Copy", self.view.copy)
         menu.addAction("Select all", self.view.selectAll)
         menu.exec(self.view.viewport().mapToGlobal(pos))
+
+
+class LineEditor(QDialog):
+    """Correct one line of speech, hearing it while you do."""
+
+    def __init__(self, when: str, text: str, can_play: bool, play, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Correct the line said at {when}")
+        self.resize(560, 220)
+        self.edit = QPlainTextEdit(text)
+        hear = QPushButton("▶ Hear it")
+        hear.setEnabled(can_play)
+        hear.clicked.connect(play)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        row = QHBoxLayout()
+        row.addWidget(hear)
+        row.addStretch(1)
+        row.addWidget(buttons)
+        col = QVBoxLayout(self)
+        col.addWidget(QLabel("What was said (correct any misheard words):"))
+        col.addWidget(self.edit, 1)
+        col.addLayout(row)
+        self.edit.setFocus()
+
+    def text(self) -> str:
+        return " ".join(self.edit.toPlainText().split())
