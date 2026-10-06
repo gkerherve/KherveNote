@@ -55,7 +55,7 @@ class McpServerDialog(QDialog):
         self._bridge = bridge
         # The window's own settings object (tests point it at a temp file).
         self._settings = getattr(parent, "settings", None) or QSettings(*SETTINGS)
-                self.setWindowTitle("Connect to Claude (MCP)")
+        self.setWindowTitle("Connect to Claude (MCP)")
         self.setMinimumWidth(620)
         self._build_ui()
         self._refresh()

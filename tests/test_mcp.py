@@ -176,3 +176,21 @@ def test_stdio_server_through_bridge(win, app):
 
 def test_bridge_is_off_until_enabled(win):
     assert win.bridge is None
+
+
+def test_connect_dialog_opens_and_enables_the_bridge(win, app, monkeypatch, tmp_path):
+    from khervenote import mcp_hosts
+    from khervenote.mcp_dialog import McpServerDialog
+    monkeypatch.setattr(mcp_hosts, "HOSTS", [mcp_hosts.Host.for_file(str(tmp_path / "c.json"))])
+    import khervenote.mcp_dialog as dlg_mod
+    monkeypatch.setattr(dlg_mod, "HOSTS", mcp_hosts.HOSTS)
+    dlg = McpServerDialog(win._ensure_bridge(), win)
+    assert dlg.windowTitle() == "Connect to Claude (MCP)"
+    dlg._enable.setChecked(True)
+    assert win.bridge.is_running()
+    assert win.settings.value("mcp/enabled") in (True, "true")
+    dlg._access.setCurrentIndex(0)
+    assert win.bridge.access() == "read"
+    dlg._enable.setChecked(False)
+    assert not win.bridge.is_running()
+    dlg.close()
