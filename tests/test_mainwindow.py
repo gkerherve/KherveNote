@@ -428,3 +428,16 @@ def test_a_recording_left_by_a_crash_is_offered_back(win, tmp_path, monkeypatch)
 def test_a_note_with_only_speech_is_saved(win, tmp_path):
     win._on_speech("only speech so far", 3.0)
     assert win.autosave() and win.path is not None and win.path.exists()
+
+
+def test_vocabulary_is_kept_with_the_note_and_suggested(win, tmp_path):
+    QTest.keyClicks(win.editor, "Polished LLZO pellets; ToF-SIMS and LEIS showed Li2CO3.")
+    win.suggest_vocabulary()
+    words = win.note.meta.vocabulary
+    for w in ("LLZO", "ToF-SIMS", "LEIS", "Li2CO3"):
+        assert w in words
+    assert win.speech.vocabulary.text() == words
+    win.autosave()
+    from khervenote.knote_file import load_knote
+    assert load_knote(win.path, tmp_path / "c").meta.vocabulary == words
+    assert "Terms used in this talk: " + words in win._speech_text([])

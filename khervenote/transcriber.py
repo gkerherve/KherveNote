@@ -103,14 +103,19 @@ class WhisperEngine:
                                   cpu_threads=min(8, os.cpu_count() or 4),
                                   local_files_only=local)
 
-    def transcribe(self, audio: np.ndarray, language: str = "",
-                   prompt: str = "", fast: bool = False) -> tuple[str, Optional[str]]:
+    def transcribe(self, audio: np.ndarray, language: str = "", prompt: str = "",
+                   fast: bool = False, vocabulary: str = "") -> tuple[str, Optional[str]]:
         # Greedy decoding: beam search costs ~30 % more time for little
         # gain on clear lecture speech.  The preview also skips the VAD.
+        # The talk's own words, as hotwords and as a glossary before the
+        # last words heard: "ToF-SIMS" instead of "two F-SIMs".
+        vocab = " ".join(vocabulary.split())[:400]
+        if vocab:
+            prompt = f"Glossary: {vocab}. {prompt}".strip()
         segments, info = self.model.transcribe(
             audio, language=language or None, beam_size=1, vad_filter=not fast,
             without_timestamps=True, condition_on_previous_text=False,
-            initial_prompt=prompt or None)
+            initial_prompt=prompt or None, hotwords=vocab or None)
         parts = []
         for seg in segments:
             if seg.no_speech_prob > 0.6 and seg.avg_logprob < -1.0:
@@ -147,7 +152,7 @@ class ListenSession(QObject):
     def __init__(self, audio_path: str, t0: float, model: str = DEFAULT_MODEL,
                  language: str = "", device: Optional[int] = None, parent=None,
                  engine: Optional[WhisperEngine] = None,
-                 preview: Optional[WhisperEngine] = None) -> None:
+                 preview: Optional[WhisperEngine] = None, vocabulary: str = "") -> None:
         super().__init__(parent)
         self.audio_path = audio_path
         self.t0 = t0
@@ -162,6 +167,8 @@ class ListenSession(QObject):
         self._recorder: Optional[Recorder] = None
         self._worker: Optional[threading.Thread] = None
         self._context = ""
+        #: Names and terms of this talk; may change while listening.
+        self.vocabulary = vocabulary
         self._heard = 0              # samples fed so far
         self._previewed = 0          # _heard at the last preview
         self._stopping = False
@@ -243,7 +250,8 @@ class ListenSession(QObject):
             if chunk is None:
                 break
             try:
-                text, lang = self.engine.transcribe(chunk.audio, self.language, self._context)
+                text, lang = self.engine.transcribe(chunk.audio, self.language, self._context,
+                                                    vocabulary=self.vocabulary)
             except Exception as exc:  # noqa: BLE001
                 self.failed.emit(f"Transcription failed: {exc}")
                 continue
@@ -268,7 +276,8 @@ class ListenSession(QObject):
             return
         audio = pending.audio[-int(self.PREVIEW_WINDOW * RATE):]
         try:
-            text, _ = self.preview.transcribe(audio, self.language, self._context, fast=True)
+            text, _ = self.preview.transcribe(audio, self.language, self._context, fast=True,
+                                              vocabulary=self.vocabulary)
         except Exception:  # noqa: BLE001 — a failed preview is not worth reporting
             return
         if text and self._chunks.empty():

@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import QUrl, Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QMenu, QPushButton, QTextBrowser, QToolButton, QVBoxLayout,
+    QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QTextBrowser, QToolButton, QVBoxLayout,
     QWidget,
 )
 
@@ -29,6 +29,9 @@ class SpeechPanel(QWidget):
     #: Turn the selected speech (or all of it) into notes with the AI.
     notes_requested = Signal(str)
     fill_section_requested = Signal()
+    #: The talk's own words (names, acronyms, terms) were edited.
+    vocabulary_changed = Signal(str)
+    suggest_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -45,6 +48,23 @@ class SpeechPanel(QWidget):
         top = QHBoxLayout()
         top.addWidget(listen)
         top.addWidget(self.state, 1)
+
+        self.vocabulary = QLineEdit()
+        self.vocabulary.setPlaceholderText("Words in this talk — names, acronyms, terms: "
+                                           "LLZO, ToF-SIMS, Tougaard…")
+        self.vocabulary.setToolTip(
+            "Speech recognition listens for these and spells them right "
+            "(“ToF-SIMS” rather than “two F-SIMs”). Separate them with commas; "
+            "they can be changed while listening.")
+        self.vocabulary.textEdited.connect(self.vocabulary_changed)
+        suggest = QToolButton()
+        suggest.setText("Suggest")
+        suggest.setToolTip("Fill in the acronyms, names and terms found in your notes and "
+                           "attached documents")
+        suggest.clicked.connect(self.suggest_requested)
+        vrow = QHBoxLayout()
+        vrow.addWidget(self.vocabulary, 1)
+        vrow.addWidget(suggest)
 
         self.view = QTextBrowser()
         self.view.setOpenLinks(False)
@@ -72,10 +92,15 @@ class SpeechPanel(QWidget):
         col = QVBoxLayout(self)
         col.setContentsMargins(8, 8, 8, 8)
         col.addLayout(top)
+        col.addLayout(vrow)
         col.addWidget(self.view, 1)
         col.addWidget(self.live)
         col.addLayout(row)
         self.apply_theme()
+
+    def set_vocabulary(self, words: str) -> None:
+        self.vocabulary.setText(words)
+        self.vocabulary.setCursorPosition(0)
 
     def set_listen_action(self, action) -> None:
         self._listen.setDefaultAction(action)

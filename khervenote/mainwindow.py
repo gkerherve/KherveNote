@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from . import (
     __version__, compiler, documents, history, icons, khervepdf_link, library, local_ai, recovery,
-    theme,
+    theme, vocabulary,
 )
 from .editor import (
     STYLES, NoteEditor, block_kind, document_to_note, insert_section, load_note,
@@ -271,6 +271,8 @@ class MainWindow(QMainWindow):
         self.speech.insert_requested.connect(lambda text, t: self.editor.insert_paragraph(text))
         self.speech.notes_requested.connect(self._notes_from_speech)
         self.speech.fill_section_requested.connect(self._fill_section)
+        self.speech.vocabulary_changed.connect(self._set_vocabulary)
+        self.speech.suggest_requested.connect(self.suggest_vocabulary)
         self._corr_timer = QTimer(self, singleShot=True, interval=200)
         self._corr_timer.timeout.connect(self._correlate)
         self.editor.cursorPositionChanged.connect(self._corr_timer.start)
@@ -815,6 +817,7 @@ class MainWindow(QMainWindow):
         self.doc_dock.hide()
         load_note(self.editor, note)
         self.speech.set_segments(note.transcript, self._time_label)
+        self.speech.set_vocabulary(note.meta.vocabulary)
         self._header_dirty = False
         self._update_title()
         self.library.set_pending(None if path is not None
@@ -907,7 +910,7 @@ class MainWindow(QMainWindow):
         self.session = ListenSession(str(path), t0, model,
                                      self.settings.value("speech/language", ""), device, self,
                                      engine=self._engine[1] if self._engine else None,
-                                     preview=self._preview)
+                                     preview=self._preview, vocabulary=self.note.meta.vocabulary)
         self.session.text.connect(self._on_speech)
         self.session.partial.connect(self._on_partial)
         self.session.status.connect(self._on_listen_status)
@@ -1693,7 +1696,39 @@ class MainWindow(QMainWindow):
             self.speech.highlight(t - max(60.0, self._lead()), t + 5)
 
     def _speech_text(self, segments) -> str:
-        return "\n".join(f"[{self._time_label(g.t)}] {g.text}" for g in segments)
+        lines = "\n".join(f"[{self._time_label(g.t)}] {g.text}" for g in segments)
+        words = self.note.meta.vocabulary.strip()
+        # The AI spells the talk's terms right as well.
+        return f"(Terms used in this talk: {words})\n{lines}" if words else lines
+
+    def _set_vocabulary(self, words: str) -> None:
+        self.note.meta.vocabulary = words
+        if self.session is not None:
+            self.session.vocabulary = words
+        self._header_changed()
+
+    def suggest_vocabulary(self) -> None:
+        texts = [self.header.title.text(), self.header.summary.toPlainText(),
+                 self.editor.document().toPlainText()]
+        for path, name in self.editor.attachments():
+            doc = self._docs.get(path)
+            if doc is None:
+                try:
+                    doc = documents.read(self.work_dir / path, name)
+                    self._docs[path] = doc
+                except Exception:  # noqa: BLE001 — an unreadable file adds nothing
+                    continue
+            texts.append(doc.text)
+        found = vocabulary.suggest(texts, known=self.note.meta.vocabulary)
+        if not found:
+            self.statusBar().showMessage("No new names or terms found in the note or its "
+                                         "documents.", 5000)
+            return
+        words = vocabulary.merge(self.note.meta.vocabulary, found)
+        self.speech.set_vocabulary(words)
+        self._set_vocabulary(words)
+        self.statusBar().showMessage(f"Added {len(found)} words — remove any you don't need.",
+                                     6000)
 
     def _fill_section(self) -> None:
         """Ask which speech goes with the section at the cursor — starting

@@ -167,6 +167,9 @@ class Meta:
     #: Stays with the note when its file is moved or renamed; names its
     #: folder of earlier versions.
     id: str = ""
+    #: Names, acronyms and terms of the talk, comma-separated, given to
+    #: speech recognition and the AI so they are spelt right.
+    vocabulary: str = ""
 
     def __post_init__(self) -> None:
         if self.layout not in LAYOUTS:

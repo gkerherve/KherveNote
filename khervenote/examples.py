@@ -39,6 +39,7 @@ class Example:
     body: str
     speech: list[tuple[str, str]] = field(default_factory=list)   # ("mm:ss", text)
     summary: str = ""
+    vocabulary: str = ""
 
 
 def _secs(stamp: str) -> float:
@@ -54,7 +55,8 @@ def build(ex: Example) -> Note:
     """The note an example describes."""
     started = datetime.fromisoformat(ex.started)
     note = Note(meta=Meta(title=ex.title, speaker=ex.speaker, place=ex.place,
-                          date=started.strftime("%d %B %Y"), started=ex.started),
+                          date=started.strftime("%d %B %Y"), started=ex.started,
+                          vocabulary=ex.vocabulary),
                 summary=" ".join(ex.summary.split()), sections=[Section()])
     t = 0.0
     para: list[str] = []
@@ -315,6 +317,7 @@ $\ln(k_2/k_1) = \frac{E_a}{R}\left(\frac{1}{T_1} - \frac{1}{T_2}\right) = \frac{
 Example(
     "Surface analysis — X-ray photoelectron spectroscopy (XPS)", "Lecturer: Dr L. Moreau",
     "Materials building, LG11", "2026-10-09T09:30:00",
+    vocabulary="XPS, Al Kα, Shirley, Tougaard, adventitious carbon, spin–orbit, Voigt, IMFP",
     summary="""XPS measures the binding energies of core electrons ejected by X-rays,
 giving the elements present in the top few nanometres and their chemical
 states. Peak positions shift with oxidation state; spin–orbit doublets have
@@ -366,6 +369,7 @@ Levels with $l > 0$ split into doublets with fixed area ratios:
 Example(
     "Crystallography — X-ray diffraction and crystal structure", "Lecturer: Dr K. Nakamura",
     "Materials building, Room 202", "2026-10-12T11:00:00",
+    vocabulary="Bragg, Miller indices, FCC, BCC, Scherrer, Rietveld, Williamson–Hall, Cu Kα",
     body=r"""
 # Bragg's law @01:00
 X-rays reflected from planes $d$ apart interfere constructively when
@@ -406,6 +410,7 @@ The structure factor removes some reflections:
 Example(
     "Seminar — Garnet solid electrolytes for lithium metal batteries", "Speaker: Dr P. Varga",
     "Materials building, Seminar room", "2026-10-14T16:00:00",
+    vocabulary="LLZO, garnet, Li7La3Zr2O12, Li2CO3, LiOH, ToF-SIMS, LEIS, XPS, CCD, impedance",
     summary="""Garnet Li₇La₃Zr₂O₁₂ (LLZO) is a promising solid electrolyte: stable
 against lithium metal and fast-conducting in its cubic form, which needs a
 dopant such as Al or Ga. Its weak point is the surface — Li₂CO₃/LiOH from air
@@ -454,6 +459,7 @@ $\mathrm{Li_7La_3Zr_2O_{12}}$ exists in two forms:
 Example(
     "Mechanical properties — Dislocations and strengthening", "Lecturer: Prof. J. Adeyemi",
     "Materials building, LT3", "2026-10-16T10:00:00",
+    vocabulary="Burgers vector, Schmid, Hall–Petch, Orowan, Taylor, FCC, slip systems",
     body=r"""
 # Stress and strain @01:00
 Engineering stress $\sigma = F/A_0$, strain $\varepsilon = \Delta L/L_0$; in the elastic range Hooke's law $\sigma = E\varepsilon$.

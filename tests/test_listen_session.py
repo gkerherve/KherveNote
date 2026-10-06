@@ -15,14 +15,16 @@ class FakeEngine:
     def __init__(self, label):
         self.label, self.calls = label, []
 
-    def transcribe(self, audio, language="", prompt="", fast=False):
+    def transcribe(self, audio, language="", prompt="", fast=False, vocabulary=""):
         self.calls.append((len(audio) / RATE, fast))
+        self.vocabulary = vocabulary
         return f"{self.label}:{len(audio) / RATE:.1f}", "en"
 
 
 def test_previews_while_speaking_then_final_text(app):
     main, preview = FakeEngine("final"), FakeEngine("preview")
-    s = ListenSession("unused.ogg", 10.0, engine=main, preview=preview)
+    s = ListenSession("unused.ogg", 10.0, engine=main, preview=preview,
+                      vocabulary="LLZO, ToF-SIMS")
     partials, finals = [], []
     s.partial.connect(partials.append)
     s.text.connect(lambda t, at: finals.append((t, at)))
@@ -32,7 +34,9 @@ def test_previews_while_speaking_then_final_text(app):
         s._maybe_preview()
     assert any(p.startswith("preview:") for p in partials)
     assert all(fast for _, fast in preview.calls)
+    assert preview.vocabulary == "LLZO, ToF-SIMS"
     s.stop()
     s._transcribe_loop()
     assert finals and finals[0][0].startswith("final:") and finals[0][1] >= 10.0
+    assert main.vocabulary == "LLZO, ToF-SIMS"
     assert partials[-1] == ""

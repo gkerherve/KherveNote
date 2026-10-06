@@ -140,6 +140,16 @@ the right, or **Ctrl+L**).
 - Press **Listen** again to stop; you can switch it on and off as often
   as you like — new lines are added below.
 
+**Words in this talk.** Speech recognition does not know your field: it
+hears “ToF-SIMS” as “two F-SIMs” and “Tougaard” as “target”. Type the
+talk's names, acronyms and technical terms, separated by commas, in the
+box at the top of the Speech panel — *LLZO, ToF-SIMS, LEIS, Tougaard* —
+and it spells them right (in a test, every one of those was misheard
+without the list and right with it). **Suggest** fills the box with the
+acronyms, formulas and names found in your notes and attached documents.
+The list is kept with the note, can be changed while listening, and is
+also given to the AI.
+
 **The two are linked by time:**
 
 - Click in a paragraph of your notes: the speech said **before** you wrote
