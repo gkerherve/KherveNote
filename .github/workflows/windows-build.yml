@@ -73,7 +73,9 @@ jobs:
         shell: bash
         run: |
           python -c "import sys; sys.path.insert(0, 'packaging'); import build_khervepdf as b; b.source()"
-          pip install -r build/khervepdf-src/requirements.txt
+          # --prefer-binary: the newest pikepdf may have no wheel for a
+          # runner yet (macos-14 tried to compile it and failed on qpdf).
+          pip install --prefer-binary -r build/khervepdf-src/requirements.txt
 
       - name: Run the test suite
         env:
