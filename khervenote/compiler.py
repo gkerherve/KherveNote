@@ -56,6 +56,58 @@ def find_tectonic() -> str | None:
     return None
 
 
+def bundled_cache() -> Path | None:
+    """The warmed TeX cache a release build carries (``tectonic_cache``
+    beside the package), or None when run from source."""
+    if not getattr(sys, "frozen", False):
+        return None
+    d = Path(sys._MEIPASS) / "khervenote" / "tectonic_cache"
+    return d if d.is_dir() else None
+
+
+def tectonic_cache_dir(tectonic: str) -> Path | None:
+    """The root of *tectonic*'s cache (it differs per OS, so the binary
+    itself is asked).  ``user-cache-dir`` names ``<root>/bundles``; the
+    root also holds ``formats/``, and the bundled cache mirrors the root."""
+    kw: dict = dict(stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=15)
+    if sys.platform == "win32":
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        proc = subprocess.run([tectonic, "-X", "show", "user-cache-dir"], **kw)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # stdout only: tectonic writes a "note: ..." line to stderr.
+    lines = (proc.stdout or "").strip().splitlines()
+    path = Path(lines[-1].strip()) if proc.returncode == 0 and lines else None
+    if path is None or not path.is_absolute():
+        return None
+    return path.parent if path.name == "bundles" else path
+
+
+def seed_tectonic_cache() -> int:
+    """Copy the bundled TeX cache into the user's tectonic cache, so the
+    first PDF export works offline.  Files already there are kept.
+    Returns the number of files copied."""
+    src = bundled_cache()
+    tectonic = find_tectonic()
+    if src is None or tectonic is None:
+        return 0
+    dest = tectonic_cache_dir(tectonic)
+    if dest is None:
+        return 0
+    copied = 0
+    for path in src.rglob("*"):
+        target = dest / path.relative_to(src)
+        if path.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            copied += 1
+    return copied
+
+
 def _run(cmd: list[str], timeout: float) -> tuple[int, str]:
     kw: dict = dict(stdin=subprocess.DEVNULL, capture_output=True, text=True,
                     encoding="utf-8", errors="replace", timeout=timeout)

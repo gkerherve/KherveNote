@@ -48,8 +48,14 @@ from .transcriber import DEFAULT_MODEL, LANGUAGES, MODELS, ListenSession, downlo
 
 
 def version_string() -> str:
-    """``<major>.<minor>.<commits>+<sha7>`` from a checkout, else the
-    bare version (a frozen build has no repository next to it)."""
+    """``<major>.<minor>.<commits>+<sha7>``: from the ``VERSION`` file a
+    release build stamps (a frozen app has no repository next to it),
+    else from the checkout's git, else the bare ``__version__``."""
+    stamped = Path(__file__).resolve().with_name("VERSION")
+    if stamped.is_file():
+        text = stamped.read_text(encoding="utf-8").strip()
+        if text:
+            return text
     root = Path(__file__).resolve().parent.parent
     try:
         run = lambda *a: subprocess.run(  # noqa: E731

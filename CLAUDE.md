@@ -116,7 +116,8 @@ stack. Consequences that must hold for anything added to the template:
 | Documents | Attach PDF / Word / PowerPoint; sections, find, summarise, ask the AI | done (0.12) |
 | Links | Open in KherveTeX, KherveRef citations | later |
 | KhervePDF | PDFs in notes open in KhervePDF; its saved annotations stay in the note | done (0.20) |
-| Release | Installers with tectonic, warmed cache, a Whisper model and KhervePDF | later |
+| Release | CI installers (Windows Inno, macOS DMGs) with tectonic + warmed cache | done (0.26) |
+| Release 2 | Ship KhervePDF with KherveNote; optional bundled Whisper model | later |
 
 Attached documents sit **in the page** as an inline icon (an image whose
 resource name is `knote-attachment:<path>|<name>`, drawn by
@@ -164,3 +165,49 @@ blocks it) is reported after 5 s.
 
 Transcription stays **offline** (user decision, 2026-10-05): audio never
 leaves the machine.
+
+## Packaging and releases
+
+Release version = `<__version__>.<commit count>` (e.g. `0.26.27`), the
+same number the window title shows without the `+sha`.
+`packaging/spec_common.py` computes it and writes the git-ignored
+`khervenote/VERSION`, which `mainwindow.version_string()` reads first in a
+frozen build (no `.git` there). Builds refuse a shallow clone.
+
+All release artifacts come from GitHub Actions, from **one tagged commit
+on `dev`** (workflows only build and upload artifacts — they never create
+a release):
+
+- `git tag v<ver> && git push origin v<ver>` → `windows-build.yml`:
+  `KherveNote-Setup-<ver>.exe` (per-user Inno, `.knote` associated),
+  `KherveNote-<ver>-portable.zip`, stable `KherveNote-Setup.exe`; the
+  installer is installed silently, smoke-tested and uninstalled on CI.
+- `git tag macos-v<ver> && git push origin macos-v<ver>` →
+  `macos-build.yml`: arm64 (macos-14) and x86_64 (macos-15-intel)
+  `KherveNote-<ver>-macOS-<arch>.dmg` + stable `KherveNote-macOS-<arch>.dmg`
+  + `.sha256`, ad hoc signed. Info.plist carries the microphone and
+  camera usage strings; `packaging/macos/entitlements.plist` adds
+  audio-input / camera for a future Developer ID (hardened runtime) build.
+
+Each job runs the tests, then `packaging/smoke_test.py`, which starts the
+frozen app with `--self-test` (`khervenote/selftest.py`): speech stack
+imports + the VAD model, an **offline** PDF from the bundled tectonic and
+cache, the main window on a throw-away library. Local Mac dry run:
+`python packaging/build_macos.py` (`CI=1` skips create-dmg's Finder
+layout, which waits on an Automation permission prompt).
+
+What is bundled vs fetched on first use (decided 2026-10-06):
+
+- **Bundled:** tectonic 0.17.0 (official binary, `fetch_tectonic.py`) and
+  a TeX cache warmed by typesetting every example note in both layouts
+  (~45 MB, `khervenote/tectonic_cache`, git-ignored). On start-up a frozen
+  build copies it into tectonic's own cache (`compiler.seed_tectonic_cache`,
+  never overwriting), so the first PDF export works offline. The speech
+  engine (faster-whisper, CTranslate2, onnxruntime, PyAV) is code and is
+  bundled.
+- **First use:** the Whisper model (Small, the default, ~480 MB) downloads
+  once on the first Listen — the recording runs meanwhile — then works
+  offline. Bundling it would more than double the installer for a model
+  some users never need or replace with another size.
+- **Not bundled:** Ollama and its models (separate install), KhervePDF
+  (found when installed; shipping it inside is "Release 2").

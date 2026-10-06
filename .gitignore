@@ -15,3 +15,8 @@ dist/
 *.aux
 *.log
 *.out
+
+# Stamped by packaging at build time
+khervenote/VERSION
+khervenote/tectonic_cache/
+packaging/bin/

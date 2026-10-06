@@ -15,16 +15,34 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from . import theme
 
 
+def _user() -> str:
+    """Who runs this, for the lock name (Windows has no ``os.getuid``)."""
+    if hasattr(os, "getuid"):
+        return str(os.getuid())
+    return os.environ.get("USERNAME", "user")
+
+
 def _single_instance() -> Optional[QLockFile]:
     """The lock that makes this the only KherveNote running.  Two windows
     reopen the same note and each save over the other's, so a second
     one must not start.  A lock left by a crashed run is taken over."""
-    lock = QLockFile(os.path.join(tempfile.gettempdir(), f"khervenote-{os.getuid()}.lock"))
+    lock = QLockFile(os.path.join(tempfile.gettempdir(), f"khervenote-{_user()}.lock"))
     lock.setStaleLockTime(0)
     return lock if lock.tryLock(200) else None
 
 
 def main() -> None:
+    if "--self-test" in sys.argv:
+        from .selftest import run
+        sys.exit(run(sys.argv[sys.argv.index("--self-test") + 1:]))
+    if getattr(sys, "frozen", False):
+        # Release builds carry tectonic and a warmed TeX cache: put the
+        # cache where tectonic looks, so PDF export works offline at once.
+        from .compiler import seed_tectonic_cache
+        try:
+            seed_tectonic_cache()
+        except OSError:
+            pass
     app = QApplication(sys.argv)
     app.setApplicationName("KherveNote")
     app.setOrganizationName("KherveTools")

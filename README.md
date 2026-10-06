@@ -84,6 +84,9 @@ python3 -m venv .venv
 .venv/bin/python KherveNote.py
 ```
 
+Installers for Windows and macOS (Apple Silicon and Intel) bundle
+tectonic and the TeX files the template needs, so PDF export works out of
+the box; the speech model downloads once on first use. From source,
 PDF export needs [tectonic](https://tectonic-typesetting.github.io/)
 (`brew install tectonic` on a Mac).
 

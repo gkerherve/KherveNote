@@ -384,7 +384,9 @@ Text typed after a picture on the same line becomes its caption.
 
 - Notes save themselves (see section 2); **Save** (Ctrl+S) saves at once.
   A `.knote` file holds the note, its pictures and its recordings.
-- **Export PDF** (Ctrl+E) compiles the note with LaTeX:
+- **Export PDF** (Ctrl+E) compiles the note with LaTeX (the installed
+  app carries its own LaTeX engine, tectonic, and the files the note
+  needs, so it works offline from the first export):
   - *Export ▸ Continuous page* (default): the whole note on **one long
     page**, just like the screen, with a bookmark per section;
   - *Export ▸ A4 pages*: ordinary pages for printing.

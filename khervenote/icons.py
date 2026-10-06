@@ -337,11 +337,14 @@ def help_book() -> QIcon:
     return _done(px, p)
 
 
-def app_icon() -> QIcon:
-    px = QPixmap(64, 64)
+def app_icon_pixmap(size: int = 64) -> QPixmap:
+    """The KherveNote mark at any size — also what packaging renders the
+    .ico / .icns and the website icon from."""
+    px = QPixmap(size, size)
     px.fill(Qt.transparent)
     p = QPainter(px)
     p.setRenderHint(QPainter.Antialiasing, True)
+    p.scale(size / 64, size / 64)
     p.setPen(Qt.NoPen)
     p.setBrush(QColor("#1a6dd8"))
     p.drawRoundedRect(QRectF(4, 4, 56, 56), 12, 12)
@@ -352,4 +355,8 @@ def app_icon() -> QIcon:
     p.setBrush(QColor("#d0302b"))
     p.drawEllipse(QRectF(40, 38, 14, 14))
     p.end()
-    return QIcon(px)
+    return px
+
+
+def app_icon() -> QIcon:
+    return QIcon(app_icon_pixmap(64))

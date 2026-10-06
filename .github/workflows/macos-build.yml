@@ -1,0 +1,126 @@
+name: macOS build
+
+# PyInstaller cannot cross-compile, so the .app has to be produced on a Mac.
+# Both architectures are built: macos-14 is Apple Silicon (arm64),
+# macos-15-intel the x86_64 image, so Intel users get a native DMG rather
+# than running Rosetta.
+#
+# Not macos-13: that image was retired in December 2025 and the label no
+# longer resolves, so a job asking for it queues for ever rather than
+# failing. macos-15-intel is GitHub's last x86_64 image and goes away in
+# August 2027, after which this matrix is arm64 only.
+#
+# This workflow only BUILDS. It uploads the DMGs as workflow artifacts and
+# never creates a release: publishing is a deliberate step done by hand from
+# those artifacts (`gh release create macos-v<ver> --latest=false ...`).
+#
+# Development happens on `dev`, not on the default branch, and GitHub only
+# lists workflow_dispatch workflows that exist on the default branch — so
+# the trigger is a tag push, which runs the workflow file of the tagged
+# commit wherever it lives:
+#
+#   git tag macos-v0.26.N && git push origin macos-v0.26.N
+
+on:
+  push:
+    tags:
+      - "macos-v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false     # an Intel failure should not hide a good arm64 build
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45    # a hung test must not hold a runner for 6 hours
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version is `git rev-list --count HEAD`, so a shallow
+          # clone would silently ship the wrong build number.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          python -c "import PySide6, faster_whisper, ctranslate2, onnxruntime, sounddevice, soundfile, pymupdf; print('PySide6', PySide6.__version__)"
+
+      - name: Fetch tectonic and warm the offline TeX cache
+        # The pinned official tectonic, and a cache of exactly what the
+        # example notes need (both layouts), bundled by the spec.
+        run: python packaging/fetch_tectonic.py --warm
+
+      - name: Run the test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -q
+
+      - name: Build the .app and the DMG
+        run: python packaging/build_macos.py
+
+      - name: Read the version back
+        # Read from the file the build stamped, not from git again, so the
+        # artifact name cannot disagree with the app's own About box.
+        run: echo "VERSION=$(cut -d+ -f1 khervenote/VERSION)" >> "$GITHUB_ENV"
+
+      - name: Check the bundle
+        # What can actually be wrong in a finished bundle: no Info.plist or
+        # no microphone / camera strings (Qt then refuses both), a broken
+        # signature, a bad version, tectonic or its cache left out, or a
+        # binary built for the other architecture, which users meet as
+        # "the app is damaged".
+        run: |
+          set -euo pipefail
+          APP=dist/KherveNote.app
+          test -x "$APP/Contents/MacOS/KherveNote"
+          plutil -p "$APP/Contents/Info.plist" \
+            | grep -E 'CFBundleIdentifier|CFBundleShortVersionString'
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          codesign --verify --deep --strict "$APP"
+          file -b "$APP/Contents/MacOS/KherveNote" | grep -q '${{ matrix.arch }}'
+          plutil -p "$APP/Contents/Info.plist" | grep -q NSMicrophoneUsageDescription
+          plutil -p "$APP/Contents/Info.plist" | grep -q NSCameraUsageDescription
+          T=$(find "$APP" -name tectonic -type f | head -1)
+          test -n "$T" && file -b "$T" | grep -q '${{ matrix.arch }}'
+          find "$APP" -maxdepth 6 -type d -name tectonic_cache | grep -q .
+          find "$APP" -maxdepth 6 -name 'manual.md' | grep -q .
+          find "$APP" -name 'silero*.onnx' | grep -q .
+          du -sh "$APP"
+
+      - name: Smoke-test the frozen app
+        # Start the real executable with --self-test: the speech stack and
+        # its voice detector, an offline PDF from the bundled tectonic and
+        # cache, the main window. A missing hidden import only shows up
+        # when the code that needs it runs.
+        run: |
+          python packaging/smoke_test.py \
+            dist/KherveNote.app/Contents/MacOS/KherveNote --version "$VERSION"
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: KherveNote-${{ env.VERSION }}-macOS-${{ matrix.arch }}
+          # '*' also matches nothing, so each pattern covers the versioned
+          # name and the stable one (KherveNote-macOS-<arch>.dmg).
+          path: |
+            dist/KherveNote-*macOS-${{ matrix.arch }}.dmg
+            dist/KherveNote-*macOS-${{ matrix.arch }}.dmg.sha256
+            dist/KherveNote-macOS-${{ matrix.arch }}.json
+          if-no-files-found: error
