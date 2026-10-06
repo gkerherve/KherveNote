@@ -626,10 +626,7 @@ class MainWindow(QMainWindow):
         current = local_ai.pick_default(models, self.settings.value("ai/ollama_model", ""))
         group = QActionGroup(menu)
         for name in models:
-            # Custom models carry their own instructions; say what they are.
-            label = name + ("   — XPS assistant made for KherveFitting, not for notes"
-                            if name.startswith("xps-expert") else "")
-            a = menu.addAction(label)
+            a = menu.addAction(name)
             a.setCheckable(True)
             a.setChecked(name == current)
             a.triggered.connect(lambda _=False, n=name: self.settings.setValue("ai/ollama_model", n))

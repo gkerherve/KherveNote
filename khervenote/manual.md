@@ -260,10 +260,7 @@ stays quick on long documents thanks to its hybrid design; its writing
 is plainer and more literal, and it is strongest in English. Both are
 free to use.
 
-Every model Ollama has is listed under *AI ▸ Local AI model* —
-including custom ones made for other apps, such as the *xps-expert*
-models built for KherveFitting, which are marked as such and are not
-meant for notes.
+Every model Ollama has is listed under *AI ▸ Local AI model*.
 
 **While the AI works** a bar appears above the page: what it is doing
 ("Read 2 of 3 parts"), how long it has taken, the words it is writing

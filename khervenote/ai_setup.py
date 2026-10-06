@@ -126,11 +126,6 @@ class AISetupDialog(QDialog):
         self.bar.setVisible(False)
         self.bar_label = QLabel()
 
-        other = QLabel(
-            "<p><i>Models made for another purpose, such as the <b>xps-expert</b> models "
-            "built for KherveFitting, carry their own instructions and are not meant for "
-            "notes.</i></p>")
-        other.setWordWrap(True)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
 
@@ -142,7 +137,6 @@ class AISetupDialog(QDialog):
         col.addWidget(self.table, 1)
         col.addWidget(self.bar_label)
         col.addWidget(self.bar)
-        col.addWidget(other)
         end = QHBoxLayout()
         end.addStretch(1)
         end.addWidget(close)
