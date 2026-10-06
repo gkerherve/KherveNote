@@ -38,6 +38,7 @@ from .model import Note
 from .audio import input_devices
 from .ai_status import AIStatusBar
 from .document_panel import DocumentPanel, DropHint
+from .player import LinePlayer
 from .speech_panel import SpeechPanel
 from .speech_range import SpeechRangeDialog
 from .model import Attachment, Recording, Segment, markdown_blocks
@@ -272,6 +273,13 @@ class MainWindow(QMainWindow):
         self.speech.notes_requested.connect(self._notes_from_speech)
         self.speech.fill_section_requested.connect(self._fill_section)
         self.speech.vocabulary_changed.connect(self._set_vocabulary)
+        self.player = LinePlayer(self)
+        self.speech.playable = lambda t: self._audio_at(t) is not None
+        self.speech.play_requested.connect(self.play_speech)
+        self.player.state.connect(self.speech.show_playing)
+        self.speech.pause_btn.clicked.connect(self.player.toggle)
+        self.speech.stop_btn.clicked.connect(lambda: (self.player.stop(),
+                                                      self.speech.show_playing(False, "")))
         self.speech.suggest_requested.connect(self.suggest_vocabulary)
         self._corr_timer = QTimer(self, singleShot=True, interval=200)
         self._corr_timer.timeout.connect(self._correlate)
@@ -809,6 +817,8 @@ class MainWindow(QMainWindow):
         (self.act_paged if note.meta.layout == "paged" else self.act_continuous).setChecked(True)
         self.editor.work_dir = self.work_dir
         self.header.load(note)
+        self.player.release()
+        self.speech.show_playing(False, "")
         self._docs.clear()
         self._doc_att = None
         if self._watcher.files():
@@ -1058,6 +1068,7 @@ class MainWindow(QMainWindow):
             shutil.copyfile(p.audio, self.work_dir / rel)
             t0 = p.t0 if chosen is into else 0.0
             self.note.recordings.append(Recording(rel, t0, float(secs)))
+            self.speech.render()
             self._header_dirty = True
             if self.save():
                 recovery.finish(p.audio)
@@ -1093,6 +1104,7 @@ class MainWindow(QMainWindow):
             # The safe copy goes once the note holding it is saved.
             self._unsaved_recordings.append(path)
             self._header_changed()
+            self.speech.render()               # its lines can now be played
         elif path.exists():
             recovery.finish(path)
         if self.session is session:
@@ -1700,6 +1712,36 @@ class MainWindow(QMainWindow):
         words = self.note.meta.vocabulary.strip()
         # The AI spells the talk's terms right as well.
         return f"(Terms used in this talk: {words})\n{lines}" if words else lines
+
+    def _audio_at(self, t: float):
+        """(file, session time it starts) of the recording holding time
+        *t*, or None."""
+        for rec in self.note.recordings:
+            path = self.work_dir / rec.path
+            if rec.t0 - 1 <= t <= rec.t0 + rec.duration + 1 and path.exists():
+                return path, rec.t0
+        s = self.session
+        if s is not None and t >= s.t0 and Path(s.audio_path).exists():
+            return Path(s.audio_path), s.t0          # the one being recorded now
+        return None
+
+    def play_speech(self, index: int, on: bool) -> None:
+        """Hear line *index* of the speech — or, with *on*, carry on from it."""
+        segs = self.note.transcript
+        if not 0 <= index < len(segs):
+            return
+        seg = segs[index]
+        found = self._audio_at(seg.t)
+        if found is None:
+            self.statusBar().showMessage("The recording of this line is not in the note.", 5000)
+            return
+        path, t0 = found
+        start = max(0.0, seg.t - t0 - 0.4)
+        end = None
+        if not on:
+            nxt = segs[index + 1].t if index + 1 < len(segs) else None
+            end = (nxt - t0 + 0.2) if nxt is not None and nxt - seg.t < 30 else start + 15
+        self.player.play(str(path), start, end, f"{self._time_label(seg.t)}  {seg.text[:60]}")
 
     def _set_vocabulary(self, words: str) -> None:
         self.note.meta.vocabulary = words

@@ -150,6 +150,13 @@ acronyms, formulas and names found in your notes and attached documents.
 The list is kept with the note, can be changed while listening, and is
 also given to the AI.
 
+**Hear any line.** Each line of speech whose recording is in the note
+has a **▶** before its time: click it to hear that line again — to check
+a word, a number or a name. Right-click a line for *Hear this line* or
+*Play from here* (keeps playing). A bar under the speech shows what is
+playing, with *Pause* and *Stop*. Lines from the recording still going
+on can be played too.
+
 **The two are linked by time:**
 
 - Click in a paragraph of your notes: the speech said **before** you wrote

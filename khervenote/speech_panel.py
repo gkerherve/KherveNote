@@ -29,6 +29,8 @@ class SpeechPanel(QWidget):
     #: Turn the selected speech (or all of it) into notes with the AI.
     notes_requested = Signal(str)
     fill_section_requested = Signal()
+    #: Play line *i* (False) or from line *i* on (True).
+    play_requested = Signal(int, bool)
     #: The talk's own words (names, acronyms, terms) were edited.
     vocabulary_changed = Signal(str)
     suggest_requested = Signal()
@@ -37,6 +39,8 @@ class SpeechPanel(QWidget):
         super().__init__(parent)
         self.segments: list[Segment] = []
         self.label: Callable[[float], str] = lambda t: f"{t:.0f}"
+        #: Whether the recording of what was said at a time is at hand.
+        self.playable: Callable[[float], bool] = lambda t: False
         self._highlight: tuple[Optional[float], Optional[float]] = (None, None)
 
         listen = QToolButton()
@@ -73,6 +77,19 @@ class SpeechPanel(QWidget):
         self.view.customContextMenuRequested.connect(self._menu)
         self.view.document().setDocumentMargin(8)
 
+        self.play_bar = QWidget()
+        self.play_label = QLabel()
+        self.pause_btn = QToolButton()
+        self.pause_btn.setText("Pause")
+        self.stop_btn = QToolButton()
+        self.stop_btn.setText("Stop")
+        prow = QHBoxLayout(self.play_bar)
+        prow.setContentsMargins(0, 0, 0, 0)
+        prow.addWidget(self.play_label, 1)
+        prow.addWidget(self.pause_btn)
+        prow.addWidget(self.stop_btn)
+        self.play_bar.setVisible(False)
+
         self.live = QLabel("")
         self.live.setWordWrap(True)
         self.live.setVisible(False)
@@ -94,6 +111,7 @@ class SpeechPanel(QWidget):
         col.addLayout(top)
         col.addLayout(vrow)
         col.addWidget(self.view, 1)
+        col.addWidget(self.play_bar)
         col.addWidget(self.live)
         col.addLayout(row)
         self.apply_theme()
@@ -158,10 +176,12 @@ class SpeechPanel(QWidget):
         rows = []
         for i, g in enumerate(self.segments):
             bg = f" style='background:{mark}'" if self._in_highlight(g.t) else ""
+            play = (f"<a href='play:{i}' style='color:{accent}; text-decoration:none' "
+                     f"title='Hear this line'>▶</a>&nbsp;" if self.playable(g.t) else "")
             rows.append(
                 f"<tr{bg}><td style='white-space:nowrap; padding-right:8px; vertical-align:top'>"
-                f"<a name='s{i}' href='seg:{i}' style='color:{accent}; text-decoration:none'>"
-                f"{html.escape(self.label(g.t))}</a></td>"
+                f"{play}<a name='s{i}' href='seg:{i}' style='color:{accent}; "
+                f"text-decoration:none'>{html.escape(self.label(g.t))}</a></td>"
                 f"<td style='padding-bottom:4px'>{html.escape(g.text)}</td></tr>")
         if not rows:
             body = (f"<p style='color:{muted}'>Nothing has been said yet. Press "
@@ -209,9 +229,18 @@ class SpeechPanel(QWidget):
         return self.segments[i] if 0 <= i < len(self.segments) else None
 
     def _clicked(self, url: QUrl) -> None:
-        seg = self._segment(url.toString())
+        href = url.toString()
+        if href.startswith("play:"):
+            self.play_requested.emit(int(href[5:]), False)
+            return
+        seg = self._segment(href)
         if seg is not None:
             self.jump_requested.emit(seg.t)
+
+    def show_playing(self, playing: bool, label: str) -> None:
+        self.play_bar.setVisible(playing or bool(label))
+        self.play_label.setText(("▶ " if playing else "❚❚ ") + label)
+        self.pause_btn.setText("Pause" if playing else "Play")
 
     def _segment_at(self, pos) -> Optional[Segment]:
         href = self.view.anchorAt(pos)
@@ -239,6 +268,11 @@ class SpeechPanel(QWidget):
                            lambda: self.insert_requested.emit(selected, seg.t if seg else 0.0))
             menu.addAction("Make notes from the selection (AI)",
                            lambda: self.notes_requested.emit(selected))
+        if seg is not None and self.playable(seg.t):
+            i = self.segments.index(seg)
+            menu.addAction("Hear this line", lambda: self.play_requested.emit(i, False))
+            menu.addAction("Play from here", lambda: self.play_requested.emit(i, True))
+            menu.addSeparator()
         if seg is not None:
             menu.addAction(f"Insert this line into my notes",
                            lambda: self.insert_requested.emit(seg.text, seg.t))

@@ -441,3 +441,31 @@ def test_vocabulary_is_kept_with_the_note_and_suggested(win, tmp_path):
     from khervenote.knote_file import load_knote
     assert load_knote(win.path, tmp_path / "c").meta.vocabulary == words
     assert "Terms used in this talk: " + words in win._speech_text([])
+
+
+def test_a_speech_line_can_be_heard(win, tmp_path, app):
+    import time
+
+    import numpy as np
+    import soundfile as sf
+
+    from khervenote.model import Recording, Segment
+    win.player.output.setVolume(0.0)            # silent in tests
+    (win.work_dir / "assets").mkdir(exist_ok=True)
+    tone = (0.2 * np.sin(np.arange(16000 * 6) / 16000 * 2 * np.pi * 220)).astype(np.float32)
+    sf.write(win.work_dir / "assets/rec-a.ogg", tone, 16000, format="OGG", subtype="OPUS")
+    win.note.recordings = [Recording("assets/rec-a.ogg", 100.0, 6.0)]
+    win.note.transcript = [Segment(101.0, "first line"), Segment(103.5, "second line"),
+                           Segment(300.0, "no audio for this one")]
+    win.speech.set_segments(win.note.transcript, win._time_label)
+    html = win.speech.view.toHtml()
+    assert html.count("play:") == 2                  # only lines with a recording
+    win.play_speech(0, False)
+    t = time.time()
+    while not win.player.playing and time.time() - t < 5:
+        app.processEvents()
+        time.sleep(0.02)
+    assert win.player.playing
+    assert 0.4 <= win.player.position_s() <= 2.0      # from just before 101 s, not 0
+    assert win.speech.play_bar.isVisible() or not win.isVisible()
+    win.player.stop()
