@@ -230,7 +230,10 @@ class MainWindow(QMainWindow):
         self.path: Optional[Path] = None
         self.note = Note.new()
         self._header_dirty = False
-        self._tmp = tempfile.TemporaryDirectory(prefix="khervenote-")
+        # Windows refuses to delete a file still open elsewhere (the media
+        # player can hold a recording a moment after it lets go): leaving a
+        # temporary file behind must never stop the window from closing.
+        self._tmp = tempfile.TemporaryDirectory(prefix="khervenote-", ignore_cleanup_errors=True)
         self.work_dir = Path(self._tmp.name)
         self._compiling = False
 
@@ -1214,7 +1217,7 @@ class MainWindow(QMainWindow):
 
     def _fresh_work_dir(self) -> None:
         self._tmp.cleanup()
-        self._tmp = tempfile.TemporaryDirectory(prefix="khervenote-")
+        self._tmp = tempfile.TemporaryDirectory(prefix="khervenote-", ignore_cleanup_errors=True)
         self.work_dir = Path(self._tmp.name)
 
     def new_note(self, folder: Optional[Path] = None) -> None:
@@ -1997,6 +2000,7 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self._stop_listening()
         if self._flush():
+            self.player.release()
             self._tmp.cleanup()
             event.accept()
         else:
