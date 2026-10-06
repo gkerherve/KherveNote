@@ -7,6 +7,10 @@ from khervenote import __version__, compiler, mainwindow
 
 
 def test_version_from_checkout_has_three_parts():
+    # A local release build leaves its stamped khervenote/VERSION behind.
+    if (Path(mainwindow.__file__).with_name("VERSION")).is_file():
+        import pytest
+        pytest.skip("a build's stamped VERSION file is present")
     v = mainwindow.version_string()
     assert v.startswith(__version__ + ".")
     assert "+" in v

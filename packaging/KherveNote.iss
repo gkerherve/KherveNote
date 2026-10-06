@@ -64,6 +64,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; not leave the old _internal tree beside the new one. It is all build
 ; output; nothing the user made lives under {app}.
 Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\KhervePDF"
 
 [Files]
 Source: "{#SRC_DIR}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

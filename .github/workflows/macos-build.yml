@@ -64,8 +64,20 @@ jobs:
 
       - name: Fetch tectonic and warm the offline TeX cache
         # The pinned official tectonic, and a cache of exactly what the
-        # example notes need (both layouts), bundled by the spec.
-        run: python packaging/fetch_tectonic.py --warm
+        # example notes need (both layouts), bundled by the spec. On PATH
+        # too, so the tests that really typeset run here as well.
+        shell: bash
+        run: |
+          python packaging/fetch_tectonic.py --warm
+          echo "$PWD/packaging/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch KhervePDF and install its requirements
+        # KhervePDF ships inside KherveNote (packaging/build_khervepdf.py
+        # pins the commit); the build script freezes it after KherveNote.
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0, 'packaging'); import build_khervepdf as b; b.source()"
+          pip install -r build/khervepdf-src/requirements.txt
 
       - name: Run the test suite
         env:
@@ -102,12 +114,16 @@ jobs:
           find "$APP" -maxdepth 6 -type d -name tectonic_cache | grep -q .
           find "$APP" -maxdepth 6 -name 'manual.md' | grep -q .
           find "$APP" -name 'silero*.onnx' | grep -q .
+          test -x "$APP/Contents/Helpers/KhervePDF.app/Contents/MacOS/KhervePDF"
+          file -b "$APP/Contents/Helpers/KhervePDF.app/Contents/MacOS/KhervePDF" | grep -q '${{ matrix.arch }}'
+          codesign --verify --strict "$APP/Contents/Helpers/KhervePDF.app"
           du -sh "$APP"
 
       - name: Smoke-test the frozen app
         # Start the real executable with --self-test: the speech stack and
         # its voice detector, an offline PDF from the bundled tectonic and
-        # cache, the main window. A missing hidden import only shows up
+        # cache, the main window driven over MCP (--mcp-server), and the
+        # bundled KhervePDF taking a PDF. A missing hidden import only shows up
         # when the code that needs it runs.
         run: |
           python packaging/smoke_test.py \

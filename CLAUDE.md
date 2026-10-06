@@ -111,13 +111,14 @@ stack. Consequences that must hold for anything added to the template:
 | Camera | Take a picture with the computer's camera | done (0.4) |
 | Listen | Microphone + **offline Whisper** (faster-whisper) writing into the page | done (0.5) |
 | Local AI | Right-click Summarise / Rephrase with **Ollama** | done (0.6) |
-| Claude | MCP server/bridge (from KherveTeX `mcp_*.py`), "Summarise with Claude" | later |
+| Claude | MCP server + bridge + Connect dialog (KherveNoise's `mcp_*.py`) | done (0.28) |
 | Sections | Section suggestions: silence + cue phrases, then semantic | later |
 | Documents | Attach PDF / Word / PowerPoint; sections, find, summarise, ask the AI | done (0.12) |
 | Links | Open in KherveTeX, KherveRef citations | later |
 | KhervePDF | PDFs in notes open in KhervePDF; its saved annotations stay in the note | done (0.20) |
 | Release | CI installers (Windows Inno, macOS DMGs) with tectonic + warmed cache | done (0.26) |
-| Release 2 | Ship KhervePDF with KherveNote; optional bundled Whisper model | later |
+| Release 2 | KhervePDF inside the installers | done (0.28) |
+| Release 3 | Optional bundled Whisper model | later |
 
 Attached documents sit **in the page** as an inline icon (an image whose
 resource name is `knote-attachment:<path>|<name>`, drawn by
@@ -192,7 +193,9 @@ a release):
 Each job runs the tests, then `packaging/smoke_test.py`, which starts the
 frozen app with `--self-test` (`khervenote/selftest.py`): speech stack
 imports + the VAD model, an **offline** PDF from the bundled tectonic and
-cache, the main window on a throw-away library. Local Mac dry run:
+cache, the main window on a throw-away library driven over MCP by
+`<exe> --mcp-server` (initialize, tools/list, add_section, get_note), and
+the bundled KhervePDF taking a PDF over its single-instance channel. Local Mac dry run:
 `python packaging/build_macos.py` (`CI=1` skips create-dmg's Finder
 layout, which waits on an Automation permission prompt).
 
@@ -209,5 +212,24 @@ What is bundled vs fetched on first use (decided 2026-10-06):
   once on the first Listen — the recording runs meanwhile — then works
   offline. Bundling it would more than double the installer for a model
   some users never need or replace with another size.
-- **Not bundled:** Ollama and its models (separate install), KhervePDF
-  (found when installed; shipping it inside is "Release 2").
+- **KhervePDF** is bundled as a program of its own (never imported):
+  `packaging/build_khervepdf.py` clones `gkerherve/KhervePDF` at a pinned
+  commit (`KHERVEPDF_REF`), freezes it with its own `KhervePDF.spec`
+  (+ a `BUNDLE` on a Mac) and copies it to `KhervePDF/KhervePDF.exe`
+  beside `KherveNote.exe` / `KherveNote.app/Contents/Helpers/KhervePDF.app`.
+  `khervepdf_link.bundled_khervepdf()` finds it after a separately
+  installed KhervePDF. Bump the pin when KhervePDF changes.
+- **Not bundled:** Ollama and its models (separate install).
+
+## Claude over MCP
+
+`mcp_server.py` (stdio, standard library only; `KherveNote --mcp-server`
+in a frozen build) relays to `mcp_bridge.py` (loopback QTcpServer + a
+token in `<state dir>/mcp-bridge.json`; `KHERVENOTE_STATE_DIR` in tests),
+which runs `mcp_tools.py` on the GUI thread. The tool table is
+`mcp_schema.py`; `tests/test_mcp.py` enforces a `_t_<name>` per tool.
+Off until AI ▸ Connect to Claude enables it (`mcp/enabled`);
+`KHERVENOTE_MCP=read|edit|full` forces it (the self-test). Sections and
+paragraphs are read off the page (`NoteEditor.section_windows`), so
+indices match what the writing tools use, and each write is one edit
+block (one Ctrl+Z). Tools never open a modal dialog.

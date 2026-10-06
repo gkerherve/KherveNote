@@ -55,11 +55,34 @@ def _sibling_checkout() -> Optional[Path]:
     return repo if (repo / "KhervePDF.py").is_file() else None
 
 
+def bundled_khervepdf() -> Optional[Path]:
+    """The KhervePDF a release build carries: ``KhervePDF/KhervePDF.exe``
+    beside ``KherveNote.exe``, or ``Contents/Helpers/KhervePDF.app``
+    inside ``KherveNote.app``.  None when run from source."""
+    if not getattr(sys, "frozen", False):
+        return None
+    here = Path(sys.executable).resolve().parent
+    if sys.platform == "darwin":
+        p = here.parent / "Helpers" / "KhervePDF.app"      # Contents/MacOS -> Contents
+        return p if p.is_dir() else None
+    p = here / "KhervePDF" / ("KhervePDF.exe" if sys.platform == "win32" else "KhervePDF")
+    return p if p.is_file() else None
+
+
+def bundled_executable() -> Optional[Path]:
+    """The bundled KhervePDF's own executable (inside the .app on a Mac)."""
+    p = bundled_khervepdf()
+    if p is not None and p.suffix == ".app":
+        p = p / "Contents" / "MacOS" / "KhervePDF"
+    return p if p is not None and p.is_file() else None
+
+
 def launch_command(paths: list[str], configured: str = "") -> Optional[list[str]]:
     """How to start KhervePDF with *paths*, or None if it is not here.
 
     Looked for in order: a path the user set (an app, an .exe or a
-    checkout), the installed app, a source checkout beside KherveNote.
+    checkout), the installed app, the copy the KherveNote installer
+    ships, a source checkout beside KherveNote.
     """
     candidates: list[Path] = []
     if configured:
@@ -73,6 +96,9 @@ def launch_command(paths: list[str], configured: str = "") -> Optional[list[str]
             if base:
                 candidates.append(Path(base) / "KhervePDF" / "KhervePDF.exe")
                 candidates.append(Path(base) / "Programs" / "KhervePDF" / "KhervePDF.exe")
+    bundled = bundled_khervepdf()
+    if bundled is not None:
+        candidates.append(bundled)
     checkout = _sibling_checkout()
     if checkout is not None:
         candidates.append(checkout)

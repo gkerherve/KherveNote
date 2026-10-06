@@ -301,6 +301,36 @@ two over a long document — the bar shows it is working.
 **Not happy with what the AI wrote? Press Undo** (Ctrl+Z, or the ↶
 button): each AI change is one undo step.
 
+### Claude (over MCP)
+
+*AI ▸ Connect to Claude (MCP)…* lets **Claude Desktop, Claude Code,
+Cursor** (and other MCP applications) work on the open note with the
+login you already have — no API key. It is **off until you tick "Let
+assistants connect to KherveNote"**, and only reachable from this
+computer.
+
+1. Tick *Let assistants connect to KherveNote*.
+2. Pick your application in the list and press **Connect** — KherveNote
+   writes its entry into that application's settings (a backup is kept).
+3. Restart the application, then name KherveNote in the chat: *"turn the
+   speech in my KherveNote note into proper notes"*, *"fill in every
+   section of my KherveNote note from what was said"*.
+
+Claude can then read the note and the speech transcript (all of it, or
+the part that goes with one section), list and open your notes, add
+sections, fill a section in from the speech under *From the speech
+(times)*, add or rewrite paragraphs, set the title, speaker and summary,
+save, and export LaTeX or PDF. **Every change is one Ctrl+Z.**
+
+*The assistant may:* **Read only** (read notes and speech), **Edit**
+(the default — also write in the note, open notes from your library and
+save), or **Full** (also export to files of its own choosing). The
+*Recent activity* list shows every call it made.
+
+Claude runs in its own application, not on this computer, so what it
+reads of the note and the speech is sent to it — the speech recognition
+itself stays offline either way.
+
 ## 7. Documents — PDF, Word, PowerPoint
 
 Put the handouts, slides or papers of a talk into its note:
@@ -322,7 +352,9 @@ note's own copy: annotations you **save in KhervePDF are kept in the
 note** (save there before you switch to another note). Word, PowerPoint
 and text documents open in their usual app the same way.
 
-If KhervePDF is not found, KherveNote asks where it is (*File ▸ Where is
+The installed KherveNote **comes with KhervePDF**, so this works out of
+the box; a KhervePDF you installed separately is used first. If KhervePDF
+is not found (when running from source), KherveNote asks where it is (*File ▸ Where is
 KhervePDF…*) or opens the computer's default viewer instead.
 
 **Right-click the icon** for the **Document panel** (sections, find,

@@ -4,6 +4,7 @@
 """Main window: toolbar, the Notes library, the note header and the endless page."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -362,6 +363,35 @@ class MainWindow(QMainWindow):
         else:
             self._set_note(Note.new())
         QTimer.singleShot(400, self.offer_recovery)
+        self.bridge = None
+        self.start_mcp_if_enabled()
+
+    # ── Claude over MCP ────────────────────────────────────────────
+
+    def _ensure_bridge(self):
+        if self.bridge is None:
+            from .mcp_bridge import ACCESS_LEVELS, DEFAULT_ACCESS, McpBridge
+            self.bridge = McpBridge(self)
+            level = str(self.settings.value("mcp/access", DEFAULT_ACCESS))
+            self.bridge.set_access(level if level in ACCESS_LEVELS else DEFAULT_ACCESS)
+        return self.bridge
+
+    def start_mcp_if_enabled(self) -> None:
+        """Off until the user turns it on (AI ▸ Connect to Claude);
+        KHERVENOTE_MCP=read|edit|full starts it at that level (the
+        release smoke test)."""
+        forced = os.environ.get("KHERVENOTE_MCP", "")
+        if forced in ("read", "edit", "full"):
+            self._ensure_bridge().set_access(forced)
+            self.bridge.start()
+        elif str(self.settings.value("mcp/enabled", False)).lower() in ("true", "1"):
+            self._ensure_bridge().start()
+
+    def show_mcp_dialog(self) -> None:
+        from .mcp_dialog import McpServerDialog
+        dlg = McpServerDialog(self._ensure_bridge(), self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.show()
 
     # ── actions ────────────────────────────────────────────────────
 
@@ -631,6 +661,10 @@ class MainWindow(QMainWindow):
                                     self._fill_every_section))
         menu.addAction(self._action("Make &notes from the speech",
                                     lambda: self._notes_from_speech("")))
+        menu.addSeparator()
+        menu.addAction(self._action("Connect to &Claude (MCP)…", self.show_mcp_dialog, None,
+                                    "Let Claude Desktop, Claude Code or Cursor read the note "
+                                    "and the speech and write the note with you"))
         menu.addSeparator()
         self._ai_model_menu = menu.addMenu("Local AI &model (Ollama)")
         menu.addAction(self._action("Set &up the local AI… (install Ollama, choose a model)",
@@ -2000,6 +2034,8 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self._stop_listening()
         if self._flush():
+            if self.bridge is not None:
+                self.bridge.stop()
             self.player.release()
             self._tmp.cleanup()
             event.accept()

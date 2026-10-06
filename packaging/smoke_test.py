@@ -15,8 +15,11 @@ offscreen platform, which:
 * seeds the bundled TeX cache and typesets an example note with the
   BUNDLED tectonic in ``--only-cached`` mode: the PDF export works
   without the network;
-* builds the main window on a throw-away library and settings, and
-  closes it.
+* builds the main window on a throw-away library and settings with the
+  MCP bridge on, then runs ``<exe> --mcp-server`` the way Claude Desktop
+  does: initialize, tools/list, add_section, get_note;
+* starts the bundled KhervePDF and hands it the PDF over its
+  single-instance channel, waiting for its "ok".
 
 The Whisper model is not bundled, so no speech is transcribed here.
 Exits non-zero on the first failure.

@@ -66,7 +66,8 @@ def run(args: list[str]) -> int:
             raise RuntimeError(f"not the bundled tectonic: {tectonic}")
         # An empty cache of its own: the compile below can only succeed
         # from what the build bundled (and the user's cache is untouched).
-        os.environ["TECTONIC_CACHE_DIR"] = str(work / "tex-cache")
+        if getattr(sys, "frozen", False):
+            os.environ["TECTONIC_CACHE_DIR"] = str(work / "tex-cache")
         seeded = compiler.seed_tectonic_cache()
         if getattr(sys, "frozen", False) and seeded < 20:
             raise RuntimeError(f"only {seeded} files seeded from the bundled TeX cache")
@@ -83,6 +84,55 @@ def run(args: list[str]) -> int:
         return (f"{tectonic}: {seeded} cache files seeded, offline PDF "
                 f"{len(heights)} page(s), {heights[0]:.0f} mm tall")
 
+    def khervepdf():
+        """The KhervePDF the installer ships starts, and takes a PDF over
+        its single-instance channel (the way KherveNote hands it one)."""
+        import subprocess
+        import time
+        from PySide6.QtNetwork import QLocalSocket
+        from PySide6.QtWidgets import QApplication
+        from . import khervepdf_link
+        app = QApplication.instance() or QApplication([])  # noqa: F841
+        exe = khervepdf_link.bundled_executable()
+        if exe is None:
+            if getattr(sys, "frozen", False):
+                raise RuntimeError("no KhervePDF inside this build")
+            return "skipped (run from source)"
+        name = f"knote-selftest-{os.getpid()}"
+        env = dict(os.environ, KHERVEPDF_IPC_NAME=name, QT_QPA_PLATFORM="offscreen")
+        pdf = next((work / "tex").glob("*.pdf"), None)
+        proc = subprocess.Popen([str(exe)], env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.time() + 120
+            while True:
+                if proc.poll() is not None:
+                    raise RuntimeError(f"KhervePDF exited with code {proc.returncode}")
+                sock = QLocalSocket()
+                sock.connectToServer(name)
+                if sock.waitForConnected(500):
+                    break
+                if time.time() > deadline:
+                    raise RuntimeError("KhervePDF did not open its channel in 120 s")
+                time.sleep(0.5)
+            req = {"cmd": "open", "paths": [str(pdf)] if pdf else []}
+            sock.write((json.dumps(req) + "\n").encode())
+            sock.flush()
+            sock.waitForBytesWritten(2000)
+            reply = b""
+            while b"\n" not in reply and sock.waitForReadyRead(10000):
+                reply += bytes(sock.readAll())
+            sock.disconnectFromServer()
+            if reply.strip() != b"ok":
+                raise RuntimeError(f"KhervePDF answered {reply!r}")
+            return f"{exe}: started, took {'a PDF' if pdf else 'the request'}"
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
     def window():
         from PySide6.QtCore import QSettings
         from PySide6.QtWidgets import QApplication
@@ -91,21 +141,74 @@ def run(args: list[str]) -> int:
         ini = str(work / "settings.ini")
         QSettings(ini, QSettings.IniFormat).setValue("library/root", str(work / "library"))
         mainwindow.QSettings = lambda *a: QSettings(ini, QSettings.IniFormat)
+        os.environ["KHERVENOTE_STATE_DIR"] = str(work / "state")
+        os.environ["KHERVENOTE_MCP"] = "edit"
         win = mainwindow.MainWindow(None)
         win.show()
         app.processEvents()
         title = win.windowTitle()
-        win.close()
-        app.processEvents()
-        return title
+        try:
+            mcp = _mcp_round_trip(app)
+        finally:
+            win._mark_clean()
+            win.close()
+            app.processEvents()
+        return f"{title}; MCP: {mcp}"
 
     check("imports", imports)
     check("voice_detector", voice_detector)
     check("tex", tex)
     check("window", window)
+    check("khervepdf", khervepdf)
     report["ok"] = all(not v.startswith("FAILED") for v in checks.values())
     text = json.dumps(report, indent=2)
     if report_path:
         report_path.write_text(text, encoding="utf-8")
     print(text, flush=True)
     return 0 if report["ok"] else 1
+
+
+def _mcp_round_trip(app) -> str:
+    """What Claude Desktop does: start ``<exe> --mcp-server`` (or the
+    module from source), initialize, list the tools, call one — through
+    the bridge of the window that is open."""
+    import subprocess
+    import threading
+    import time
+    cmd = ([sys.executable, "--mcp-server"] if getattr(sys, "frozen", False)
+           else [sys.executable, "-m", "khervenote.mcp_server"])
+    msgs = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "add_section",
+                    "arguments": {"title": "From Claude", "body": "- it works"}}},
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+         "params": {"name": "get_note", "arguments": {}}},
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, env=dict(os.environ))
+    proc.stdin.write(("\n".join(json.dumps(m) for m in msgs) + "\n").encode())
+    proc.stdin.close()
+    lines: list = []
+    reader = threading.Thread(target=lambda: lines.extend(
+        proc.stdout.read().decode().splitlines()), daemon=True)
+    reader.start()
+    deadline = time.time() + 120
+    while reader.is_alive() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    if reader.is_alive():
+        proc.kill()
+        raise RuntimeError("the MCP server did not answer within 120 s")
+    replies = {r.get("id"): r for r in map(json.loads, lines)}
+    info = replies[1]["result"]["serverInfo"]
+    tools = replies[2]["result"]["tools"]
+    if replies[3]["result"].get("isError"):
+        raise RuntimeError(replies[3]["result"]["content"][0]["text"])
+    note = json.loads(replies[4]["result"]["content"][0]["text"])
+    if note["sections"][-1]["title"] != "From Claude":
+        raise RuntimeError(f"add_section did not reach the page: {note['sections']}")
+    return f"{info['name']} {info['version']}, {len(tools)} tools, add_section + get_note ok"

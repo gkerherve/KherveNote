@@ -32,6 +32,11 @@ def _single_instance() -> Optional[QLockFile]:
 
 
 def main() -> None:
+    # An MCP host launches us as a plain stdio subprocess it owns: no Qt,
+    # no lock — it only relays to the running window.
+    if "--mcp-server" in sys.argv[1:]:
+        from .mcp_server import main as mcp_main
+        sys.exit(mcp_main([a for a in sys.argv[1:] if a != "--mcp-server"]))
     if "--self-test" in sys.argv:
         from .selftest import run
         sys.exit(run(sys.argv[sys.argv.index("--self-test") + 1:]))

@@ -60,8 +60,20 @@ jobs:
 
       - name: Fetch tectonic and warm the offline TeX cache
         # The pinned official tectonic, and a cache of exactly what the
-        # example notes need (both layouts), bundled by the spec.
-        run: python packaging/fetch_tectonic.py --warm
+        # example notes need (both layouts), bundled by the spec. On PATH
+        # too, so the tests that really typeset run here as well.
+        shell: bash
+        run: |
+          python packaging/fetch_tectonic.py --warm
+          echo "$PWD/packaging/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch KhervePDF and install its requirements
+        # KhervePDF ships inside KherveNote (packaging/build_khervepdf.py
+        # pins the commit); the build script freezes it after KherveNote.
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0, 'packaging'); import build_khervepdf as b; b.source()"
+          pip install -r build/khervepdf-src/requirements.txt
 
       - name: Run the test suite
         env:
@@ -89,13 +101,15 @@ jobs:
           find dist/KherveNote -name tectonic.exe | grep -q .
           test -d dist/KherveNote/_internal/khervenote/tectonic_cache
           find dist/KherveNote -name 'silero*.onnx' | grep -q .
+          test -f dist/KherveNote/KhervePDF/KhervePDF.exe
           du -sh dist/KherveNote
           ls -lh dist/KherveNote-Setup-$VERSION.exe dist/KherveNote-$VERSION-portable.zip \
                  dist/KherveNote-Setup.exe
 
       - name: Smoke-test the frozen app
         # --self-test: the speech stack and its voice detector, an offline
-        # PDF from the bundled tectonic and cache, the main window.
+        # PDF from the bundled tectonic and cache, the main window driven
+        # over MCP (--mcp-server), the bundled KhervePDF taking a PDF.
         shell: bash
         run: python packaging/smoke_test.py dist/KherveNote/KherveNote.exe --version "$VERSION"
 
@@ -114,6 +128,7 @@ jobs:
             -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "installer exited $($p.ExitCode)" }
           if (-not (Test-Path "$dir\KherveNote.exe")) { Get-Content $log -Tail 40; throw "KherveNote.exe was not installed" }
+          if (-not (Test-Path "$dir\KhervePDF\KhervePDF.exe")) { throw "the bundled KhervePDF was not installed" }
           if (-not (Test-Path "HKCU:\Software\Classes\.knote")) { throw ".knote association was not written" }
           python packaging/smoke_test.py "$dir\KherveNote.exe" --version $env:VERSION
           if ($LASTEXITCODE -ne 0) { throw "smoke test of the installed app failed" }

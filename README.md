@@ -71,10 +71,15 @@ The full **[user manual](khervenote/manual.md)** is also in the app:
   its `assets/` folder.
 - Notes are `.knote` files (a zip of the note, its images and recordings).
 
+- **Claude over MCP** (*AI ▸ Connect to Claude*): Claude Desktop, Claude
+  Code or Cursor read the note and the speech transcript and write the
+  note with you — fill in sections from what was said, add sections,
+  rewrite paragraphs, export LaTeX / PDF. Local-only, off until you turn
+  it on, every change one Ctrl+Z.
+
 ## Coming next
 
-Claude over MCP and automatic section detection. See `CLAUDE.md` for
-the roadmap.
+Automatic section detection. See `CLAUDE.md` for the roadmap.
 
 ## Running from source
 
@@ -86,7 +91,8 @@ python3 -m venv .venv
 
 Installers for Windows and macOS (Apple Silicon and Intel) bundle
 tectonic and the TeX files the template needs, so PDF export works out of
-the box; the speech model downloads once on first use. From source,
+the box, and KhervePDF to open attached PDFs in; the speech model
+downloads once on first use. From source,
 PDF export needs [tectonic](https://tectonic-typesetting.github.io/)
 (`brew install tectonic` on a Mac).
 

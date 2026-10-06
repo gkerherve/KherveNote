@@ -261,9 +261,9 @@ def _preamble(note: Note, layout: str, limit_pt: Optional[float]) -> str:
 \definecolor{{knotemuted}}{{HTML}}{{6B6B6B}}
 \definecolor{{knotekey}}{{HTML}}{{D96B00}}
 \newcommand\knotetime[1]{{\leavevmode\llap{{\color{{knotemuted}}\scriptsize #1\hspace{{1em}}}}}}
-\newcommand\knotekey[1]{{\par\noindent\colorbox{{knotekey!12}}{{\parbox{{\dimexpr\linewidth-2\fboxsep}}{{%
-  \textbf{{\color{{knotekey}}$\star$ Key point.}} #1}}}}\par}}
-\newcommand\knotequestion[1]{{\par\noindent{{\color{{knoteaccent}}\textbf{{?}}}}~\emph{{#1}}\par}}
+\newcommand\knotekey[2][]{{\par\noindent#1\colorbox{{knotekey!12}}{{\parbox{{\dimexpr\linewidth-2\fboxsep}}{{%
+  \textbf{{\color{{knotekey}}$\star$ Key point.}} #2}}}}\par}}
+\newcommand\knotequestion[2][]{{\par\noindent#1{{\color{{knoteaccent}}\textbf{{?}}}}~\emph{{#2}}\par}}
 \newenvironment{{knotetranscript}}{{\par\color{{knotemuted}}\small}}{{\par}}
 \newcommand\knotesummary[1]{{\par\noindent\fcolorbox{{knoteaccent}}{{knoteaccent!6}}{{%
   \parbox{{\dimexpr\linewidth-2\fboxsep-2\fboxrule}}{{\textbf{{Summary}}\par #1}}}}\par}}
@@ -319,10 +319,12 @@ def _block(block: Block, show_times: bool, asset_dir: Optional[Path]) -> str:
     body = _body(block)
     if not body:
         return ""
+    # The time goes in the optional argument, before the box / the "?",
+    # so it lands in the margin and not over the label.
     if block.kind == "important":
-        return r"\knotekey{" + lead + body + "}"
+        return (r"\knotekey[" + lead + "]{" if lead else r"\knotekey{") + body + "}"
     if block.kind == "question":
-        return r"\knotequestion{" + lead + body + "}"
+        return (r"\knotequestion[" + lead + "]{" if lead else r"\knotequestion{") + body + "}"
     if block.kind == "transcript":
         return "\\begin{knotetranscript}\n" + lead + body + "\n\\end{knotetranscript}"
     return lead + body

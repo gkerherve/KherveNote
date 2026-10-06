@@ -20,7 +20,9 @@ The steps, in order (docs/MACOS_INSTALLER_SPEC.md of the khervefitting-web repo)
    this yields ``dist/KherveNote.app``. The version is stamped into
    ``khervenote/VERSION`` first, so the bundle reports the commit it was
    built from (a frozen app has no ``.git``).
-2. Sign every Mach-O file inside-out, then the bundle.
+   KhervePDF is built (``build_khervepdf.py``) and copied in as
+   ``Contents/Helpers/KhervePDF.app``.
+2. Sign every Mach-O file inside-out, then nested apps, then the bundle.
    ``MAC_SIGN_IDENTITY="Developer ID Application: ... (TEAMID)"`` gives the
    hardened runtime + timestamp + ``packaging/macos/entitlements.plist``;
    unset it is ad hoc (``-``), which Apple Silicon needs to run the app at
@@ -118,6 +120,11 @@ def sign(app: Path, identity: str) -> None:
     for i in range(0, len(nested), 200):       # batches keep the command short
         subprocess.run([str(c) for c in base + nested[i:i + 200]], check=True,
                        stdout=subprocess.DEVNULL)
+    # Nested apps (Contents/Helpers/KhervePDF.app) are sealed as bundles
+    # of their own before the outer bundle seals them in.
+    for inner in sorted((p for p in app.rglob("*.app") if p != app),
+                        key=lambda p: len(p.parts), reverse=True):
+        _run(base + [inner])
     _run(base + [main_exe])
     _run(base + [app])
     _run(["codesign", "--verify", "--strict", "--verbose=2", app])
@@ -263,6 +270,8 @@ def sha256(path: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--skip-khervepdf", action="store_true",
+                        help="reuse build/khervepdf-dist instead of rebuilding KhervePDF")
     parser.add_argument("--skip-freeze", action="store_true",
                         help="reuse the existing dist/KherveNote.app")
     args = parser.parse_args()
@@ -284,6 +293,13 @@ def main() -> None:
     app = _DIST / f"{_APP}.app"
     if not app.is_dir():
         raise SystemExit(f"{app} not found — did PyInstaller's BUNDLE run?")
+    # KhervePDF ships inside KherveNote (packaging/build_khervepdf.py),
+    # before signing: anything added later would break the signature.
+    sys.path.insert(0, str(_HERE))
+    import build_khervepdf
+    if not args.skip_khervepdf:
+        build_khervepdf.build()
+    build_khervepdf.install_into(app)
     # the spec stamps it again; the DMG name must agree with what About says
     bundled = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
     if bundled["CFBundleShortVersionString"] != version:

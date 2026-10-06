@@ -7,6 +7,9 @@ Run from anywhere on Windows, with the interpreter that has PyInstaller:
 
 Produces, in ``dist/``:
 
+The folder holds KhervePDF too (``KhervePDF/KhervePDF.exe``, built by
+``build_khervepdf.py``), which KherveNote opens PDFs in.
+
 * ``KherveNote-Setup-<version>.exe``    — per-user Inno Setup installer
 * ``KherveNote-<version>-portable.zip`` — the same folder, extract and run
 * ``KherveNote-Setup.exe``              — stable-name copy; the website links
@@ -117,6 +120,8 @@ def build_installer(version: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--skip-khervepdf", action="store_true",
+                        help="reuse build/khervepdf-dist instead of rebuilding KhervePDF")
     parser.add_argument("--skip-freeze", action="store_true",
                         help="reuse the existing dist/KherveNote folder")
     args = parser.parse_args()
@@ -127,6 +132,12 @@ def main() -> None:
     version = stamp_version()
     if not args.skip_freeze:
         freeze()
+    # KhervePDF ships inside KherveNote (packaging/build_khervepdf.py).
+    sys.path.insert(0, str(_HERE))
+    import build_khervepdf
+    if not args.skip_khervepdf:
+        build_khervepdf.build()
+    build_khervepdf.install_into(_DIST / _APP)
     if not (_DIST / _APP / f"{_APP}.exe").is_file():
         raise SystemExit(f"{_DIST / _APP / (_APP + '.exe')} not found — did the freeze run?")
 

@@ -94,7 +94,10 @@ def test_blocks():
     # transcript always carries its time, typed blocks only on request
     assert r"\knotetime{1:02:05}so the photon" in tex
     assert r"\knotetime{01:15}" not in tex
-    assert r"\knotekey{\knotetime{01:15}Shirley" in to_latex(_note(), show_times=True)
+    timed = to_latex(_note(), show_times=True)
+    assert r"\knotekey[\knotetime{01:15}]{Shirley background}" in timed
+    assert r"\knotequestion[\knotetime{01:15}]{Why 1486.6 eV?}" not in timed  # untimed
+    assert r"\knotequestion{Why 1486.6 eV?}" in timed
 
 
 def test_continuous_and_paged_preambles():
@@ -259,3 +262,25 @@ def test_unicode_sub_and_superscripts():
     assert tex("H₂O, Al³⁺, cm⁻¹, Eₙ") == (r"H\textsubscript{2}O, Al\textsuperscript{3+}, "
                                          r"cm\textsuperscript{-1}, E\textsubscript{n}")
     assert tex(r"$2\theta = 43.3°$") == r"$2\theta = 43.3^{\circ}$"
+
+
+@needs_tectonic
+def test_times_of_key_points_and_questions_sit_in_the_margin(tmp_path):
+    """Seen in 0.26: the time of a key point was printed over its
+    "Key point." label instead of in the margin."""
+    import pymupdf
+    n = Note.new()
+    n.add_section("XPS basics", t=60)
+    n.add_block("typed", "A plain paragraph", t=70)
+    n.add_block("important", "Shirley background", t=75)
+    n.add_block("question", "Why 1486.6 eV?", t=80)
+    res = compiler.compile_tex(to_latex(n, "paged", show_times=True), tmp_path)
+    assert res.ok, res.error
+    page = pymupdf.open(res.pdf_path)[0]
+    text_left = page.search_for("A plain paragraph")[0].x0
+    for stamp, label in (("01:15", "Key point"), ("01:20", "Why 1486.6")):
+        t = page.search_for(stamp)[0]
+        lab = page.search_for(label)[0]
+        assert abs(t.y0 - lab.y0) < 4                  # same line
+        assert t.x1 <= text_left + 0.5, (stamp, t, text_left)   # in the margin
+        assert t.x1 < lab.x0                           # never over the label
