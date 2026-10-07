@@ -119,17 +119,56 @@ class Chunker:
         return [chunk] if chunk is not None else []
 
 
-def input_devices() -> list[tuple[int, str]]:
-    """(index, name) of every input device, or [] without sounddevice."""
+def input_devices(refresh: bool = False) -> list[tuple[int, str]]:
+    """(index, name) of every input device, or [] without sounddevice.
+
+    Only the default host API is listed — Windows offers each microphone
+    again through MME, DirectSound, WASAPI and WDM-KS.  Two devices with
+    the same name get " (2)", " (3)"… so a name picks one device.
+    *refresh* re-scans, so a microphone plugged in since the start shows;
+    never while a stream is open (PortAudio would close it)."""
     try:
         import sounddevice as sd
     except (ImportError, OSError):
         return []
     try:
-        return [(i, d["name"]) for i, d in enumerate(sd.query_devices())
-                if d.get("max_input_channels", 0) > 0]
+        if refresh:
+            sd._terminate()
+            sd._initialize()
+        devices = sd.query_devices()
+        try:
+            host = sd.query_devices(kind="input")["hostapi"]
+        except Exception:  # noqa: BLE001 — no default input
+            host = None
+        out, seen = [], {}
+        for i, d in enumerate(devices):
+            if d.get("max_input_channels", 0) <= 0:
+                continue
+            if host is not None and d.get("hostapi") != host:
+                continue
+            name = d["name"]
+            seen[name] = seen.get(name, 0) + 1
+            out.append((i, name if seen[name] == 1 else f"{name} ({seen[name]})"))
+        return out
     except Exception:  # noqa: BLE001 — PortAudio errors vary by platform
         return []
+
+
+def default_input_name() -> str:
+    try:
+        import sounddevice as sd
+        return sd.query_devices(kind="input")["name"]
+    except Exception:  # noqa: BLE001 — no sounddevice, or no input at all
+        return ""
+
+
+def find_input(name: str, devices: Optional[list[tuple[int, str]]] = None) -> Optional[int]:
+    """The device index called *name*, or None for the system default
+    (an empty name, or a device that is no longer connected)."""
+    if not name:
+        return None
+    return next((i for i, n in (input_devices() if devices is None else devices)
+                 if n == name), None)
 
 
 class Recorder:
@@ -152,7 +191,6 @@ class Recorder:
         self.error: Optional[str] = None
 
     def start(self) -> None:
-        import sounddevice as sd
         import soundfile as sf
         try:
             self._file = sf.SoundFile(self.path, "w", RATE, 1, format="OGG", subtype="OPUS")
@@ -161,16 +199,53 @@ class Recorder:
             self._file = sf.SoundFile(self.path, "w", RATE, 1, format="FLAC")
         self._thread = threading.Thread(target=self._drain, daemon=True)
         self._thread.start()
-        stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32",
-                                blocksize=RATE // 10, device=self.device,
-                                callback=self._callback)
+        device = self.device
+        stream = self._open_stream(device)
         with self._lock:
             if self._stopped:
                 # Stop was pressed while the device was still opening.
                 stream.close()
                 return
+            if self.device != device:
+                # Another microphone was picked meanwhile.
+                stream.close()
+                stream = self._open_stream(self.device)
             self._stream = stream
             stream.start()
+
+    def _open_stream(self, device: Optional[int]):
+        import sounddevice as sd
+        return sd.InputStream(samplerate=RATE, channels=1, dtype="float32",
+                              blocksize=RATE // 10, device=device,
+                              callback=self._callback)
+
+    def switch(self, device: Optional[int]) -> None:
+        """Carry on recording from another microphone, into the same
+        file.  If it cannot be opened the old one is kept and the error
+        raised."""
+        with self._lock:
+            if self._stream is None:
+                self.device = device             # still opening: start() takes it
+                return
+        new = self._open_stream(device)
+        with self._lock:
+            if self._stopped or self._stream is None:
+                new.close()
+                return
+            old, self._stream = self._stream, new
+            if old is not None:
+                old.stop()
+                old.close()
+            try:
+                new.start()
+            except Exception:
+                new.close()
+                self._stream = None
+                if old is not None:
+                    self._stream = self._open_stream(self.device)
+                    self._stream.start()
+                raise
+            self.device = device
 
     def _callback(self, indata, frames, time_info, status) -> None:  # PortAudio thread
         self._q.put(indata[:, 0].copy())

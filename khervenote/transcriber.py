@@ -191,6 +191,22 @@ class ListenSession(QObject):
             self._chunks.put(None)
             self.failed.emit(f"Could not open the microphone: {exc}")
 
+    def switch_device(self, device: Optional[int], name: str) -> None:
+        """Carry on from another microphone; the recording and its times
+        go on unbroken."""
+        self.device = device
+        rec = self._recorder
+        if rec is None:
+            return
+
+        def run() -> None:
+            try:
+                rec.switch(device)
+                self.status.emit(f"Listening with {name}")
+            except Exception as exc:  # noqa: BLE001 — unplugged, busy, PortAudio
+                self.failed.emit(f"Could not switch to {name}: {exc}")
+        threading.Thread(target=run, daemon=True).start()
+
     def feed(self, frames: np.ndarray) -> None:
         with self._lock:
             chunks = self.chunker.feed(frames)

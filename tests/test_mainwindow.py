@@ -515,3 +515,39 @@ def test_double_clicking_a_line_opens_the_corrector(win, monkeypatch, app):
     win.speech.edit_requested.emit(0)
     assert opened and opened[0][1] == "misheard words"
     assert win.note.transcript[0].text == "corrected words"
+
+
+def test_choosing_the_microphone_and_speakers(win, monkeypatch):
+    from khervenote import mainwindow
+    from PySide6.QtWidgets import QMenu
+    monkeypatch.setattr(mainwindow, "input_devices",
+                        lambda refresh=False: [(0, "Built-in"), (3, "USB Mic")])
+    monkeypatch.setattr(mainwindow, "default_input_name", lambda: "Built-in")
+    monkeypatch.setattr(mainwindow, "find_input",
+                        lambda name, devices=None: {"Built-in": 0, "USB Mic": 3}.get(name))
+    menu = QMenu()
+    win._fill_devices(menu)
+    labels = [a.text() for a in menu.actions()]
+    assert "System default (Built-in)" in labels and "USB Mic" in labels
+    next(a for a in menu.actions() if a.text() == "USB Mic").trigger()
+    assert win.settings.value("speech/device") == "USB Mic"
+    assert "USB Mic" in win.act_listen.toolTip()
+
+    # While listening the switch happens at once, in the same recording.
+    switched = []
+    s = _listening(win)
+    s.switch_device = lambda device, name: switched.append((device, name))
+    win.pick_microphone("")
+    assert switched == [(None, "Built-in")]
+
+    # A chosen microphone that is unplugged stays listed, marked.
+    win.settings.setValue("speech/device", "Headset")
+    win._fill_devices(menu)
+    assert "Headset — not connected" in [a.text() for a in menu.actions()]
+
+    win.pick_speakers("no-such-device")
+    assert win.settings.value("speech/output") == "no-such-device"
+    assert win.player.device == "no-such-device"   # falls back to the default meanwhile
+    assert "The chosen speakers — not connected" in [
+        a.text() for a in (win._fill_devices(menu) or menu.actions())]
+    assert win._listen_button.menu() is not None

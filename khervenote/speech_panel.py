@@ -127,8 +127,11 @@ class SpeechPanel(QWidget):
         self.vocabulary.setText(words)
         self.vocabulary.setCursorPosition(0)
 
-    def set_listen_action(self, action) -> None:
+    def set_listen_action(self, action, menu=None) -> None:
         self._listen.setDefaultAction(action)
+        if menu is not None:
+            self._listen.setMenu(menu)
+            self._listen.setPopupMode(QToolButton.MenuButtonPopup)
 
     # ── content ────────────────────────────────────────────────────
 

@@ -130,6 +130,25 @@ never written over.
 Press **Listen** (in the toolbar, at the top of the **Speech** panel on
 the right, or **Ctrl+L**).
 
+**Choosing the microphone and the speakers.** With several devices
+connected (built-in microphone, headset, USB or wireless microphone,
+a dock, Teams' virtual device…), click the **small arrow beside
+Listen**:
+
+- **Microphone** — what is recorded. *System default* follows the
+  computer's own choice. You can change it **while listening**: the
+  recording carries on from the new microphone, without a gap in the
+  times. A microphone plugged in after KherveNote started shows up the
+  next time you open the list (when not listening). A chosen microphone
+  that is unplugged stays in the list, marked *not connected*; Listen
+  then uses the system default until it is back.
+- **Speakers** — where a recorded line plays when you click **▶**
+  (headphones, so the room does not hear it). An unplugged choice falls
+  back to the default and returns by itself when plugged in again.
+
+The same choices are in *Speech ▸ Microphone* and *Speech ▸ Speakers*.
+Hover over Listen to see which microphone is in use.
+
 - **Your notes** stay on the page: you write, make sections and
   headings as usual.
 - **What is said** is written in the **Speech** panel on the right, one
@@ -217,11 +236,15 @@ the progress); after that it works without internet.
 - **Language** — leave on *Detect automatically*, or choose it to make
   recognition more reliable.
 - **Microphone** — which input to use (built-in, headset, USB mic).
+- **Speakers** — where recorded lines play back.
 
 **If nothing is written**: macOS may be blocking the microphone.
 KherveNote warns you after a few seconds of pure silence. Allow it in
 *System Settings ▸ Privacy & Security ▸ Microphone* (when running from
-PyCharm or Terminal, allow that app), then restart it.
+PyCharm or Terminal, allow that app), then restart it. Also check that
+the right microphone is picked (the arrow beside Listen) — a virtual
+device such as *Microsoft Teams Audio* records nothing unless a call
+is on.
 
 ## 6. The local AI (Ollama)
 

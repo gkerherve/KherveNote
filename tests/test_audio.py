@@ -64,3 +64,82 @@ def test_pending_is_the_speech_in_progress():
     p = c.pending()
     assert p is not None and 0.2 < p.start_s < 0.5
     assert len(p.audio) < 1.5 * RATE
+
+
+class _FakeStream:
+    opened = []
+
+    def __init__(self, device=None, callback=None, **kw):
+        self.device = device
+        self.callback = callback
+        self.started = self.closed = False
+        _FakeStream.opened.append(self)
+
+    def start(self):
+        if self.device == "broken":
+            raise RuntimeError("busy")
+        self.started = True
+
+    def stop(self):
+        self.started = False
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_sd(monkeypatch, devices, default_input=0):
+    import sys
+    import types
+    sd = types.ModuleType("sounddevice")
+    sd.InputStream = _FakeStream
+    sd.rescans = 0
+
+    def query_devices(kind=None):
+        if kind == "input":
+            return devices[default_input]
+        return devices
+    sd.query_devices = query_devices
+    sd._terminate = lambda: None
+    sd._initialize = lambda: setattr(sd, "rescans", sd.rescans + 1)
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    return sd
+
+
+def test_input_devices_one_host_api_and_unique_names(monkeypatch):
+    from khervenote.audio import find_input, input_devices
+    sd = _fake_sd(monkeypatch, [
+        {"name": "Mic", "max_input_channels": 1, "hostapi": 0},
+        {"name": "Speakers", "max_input_channels": 0, "hostapi": 0},
+        {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
+        {"name": "USB Mic", "max_input_channels": 2, "hostapi": 0},
+        {"name": "Mic", "max_input_channels": 1, "hostapi": 1},      # same mic, WASAPI
+    ])
+    assert input_devices() == [(0, "Mic"), (2, "USB Mic"), (3, "USB Mic (2)")]
+    assert find_input("USB Mic (2)") == 3
+    assert find_input("") is None and find_input("Unplugged") is None
+    input_devices(refresh=True)
+    assert sd.rescans == 1
+
+
+def test_recorder_switches_microphone_into_the_same_file(monkeypatch, tmp_path):
+    from khervenote.audio import RATE, Recorder
+    _fake_sd(monkeypatch, [{"name": "Mic", "max_input_channels": 1, "hostapi": 0}])
+    _FakeStream.opened = []
+    heard = []
+    rec = Recorder(str(tmp_path / "rec.ogg"), heard.append, lambda v: None, device=1)
+    rec.start()
+    first = _FakeStream.opened[-1]
+    first.callback(np.ones((RATE // 10, 1), np.float32) * 0.1, RATE // 10, None, None)
+    rec.switch(2)
+    second = _FakeStream.opened[-1]
+    assert first.closed and second.started and second.device == 2 and rec.device == 2
+    second.callback(np.ones((RATE // 10, 1), np.float32) * 0.1, RATE // 10, None, None)
+    # A device that cannot start leaves the one in use recording.
+    try:
+        rec.switch("broken")
+    except RuntimeError:
+        pass
+    assert rec._stream.started and rec._stream.device == 2 and rec.device == 2
+    rec.stop()
+    assert rec.frames_written == 2 * (RATE // 10)
+    assert len(heard) == 2

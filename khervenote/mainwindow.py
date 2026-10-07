@@ -36,10 +36,10 @@ from .editor import (
 from .knote_file import EXTENSION, load_knote, save_knote
 from .library_panel import LibraryPanel
 from .model import Note
-from .audio import input_devices
+from .audio import default_input_name, find_input, input_devices
 from .ai_status import AIStatusBar
 from .document_panel import DocumentPanel, DropHint
-from .player import LinePlayer
+from .player import LinePlayer, device_id, output_devices
 from .speech_panel import LineEditor, SpeechPanel
 from .speech_range import SpeechRangeDialog
 from .model import Attachment, Recording, Segment, markdown_blocks
@@ -284,6 +284,7 @@ class MainWindow(QMainWindow):
         self.speech.fill_section_requested.connect(self._fill_section)
         self.speech.vocabulary_changed.connect(self._set_vocabulary)
         self.player = LinePlayer(self)
+        self.player.set_device(self.settings.value("speech/output", ""))
         self.speech.playable = lambda t: self._audio_at(t) is not None
         self.speech.play_requested.connect(self.play_speech)
         self.speech.edit_requested.connect(self.correct_speech)
@@ -350,7 +351,10 @@ class MainWindow(QMainWindow):
         timer.start(1000)
 
         self._build_actions()
-        self.speech.set_listen_action(self.act_listen)
+        self._show_microphone()
+        devices = QMenu(self.speech)
+        devices.aboutToShow.connect(lambda: self._fill_devices(devices))
+        self.speech.set_listen_action(self.act_listen, devices)
         self.tabifyDockWidget(self.speech_dock, self.doc_dock)
         self.speech_dock.raise_()
         self._apply_theme()
@@ -599,6 +603,13 @@ class MainWindow(QMainWindow):
         # The things people look for first get their name next to the icon.
         for a in (self.act_listen, self.act_section, self.act_attach):
             tb.widgetForAction(a).setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        # The arrow beside Listen picks the microphone and the speakers.
+        listen_btn = tb.widgetForAction(self.act_listen)
+        devices = QMenu(listen_btn)
+        devices.aboutToShow.connect(lambda: self._fill_devices(devices))
+        listen_btn.setMenu(devices)
+        listen_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._listen_button = listen_btn
         self.addToolBar(tb)
         self.toolbar = tb
 
@@ -634,8 +645,10 @@ class MainWindow(QMainWindow):
             a.setChecked(code == current)
             a.triggered.connect(lambda _=False, c=code: self.settings.setValue("speech/language", c))
             group.addAction(a)
-        self._mic_menu = menu.addMenu("M&icrophone")
-        self._mic_menu.aboutToShow.connect(self._fill_mic_menu)
+        mics = menu.addMenu("M&icrophone")
+        mics.aboutToShow.connect(lambda: self._fill_mics(mics))
+        speakers = menu.addMenu("&Speakers (to hear the recording)")
+        speakers.aboutToShow.connect(lambda: self._fill_speakers(speakers))
 
     def _build_ai_menu(self, menu) -> None:
         self.act_rephrase = self._action("&Rephrase paragraph / selection",
@@ -815,16 +828,79 @@ class MainWindow(QMainWindow):
             self.editor.insert_summary_after(cur, text)
         self.statusBar().showMessage("Done — Ctrl+Z undoes it", 5000)
 
-    def _fill_mic_menu(self) -> None:
-        self._mic_menu.clear()
-        group = QActionGroup(self._mic_menu)
+    def _fill_devices(self, menu) -> None:
+        menu.clear()
+        menu.addSection("Microphone")
+        self._add_mics(menu)
+        menu.addSection("Speakers — to hear the recording")
+        self._add_speakers(menu)
+
+    def _fill_mics(self, menu) -> None:
+        menu.clear()
+        self._add_mics(menu)
+
+    def _fill_speakers(self, menu) -> None:
+        menu.clear()
+        self._add_speakers(menu)
+
+    def _add_mics(self, menu) -> None:
+        # Re-scan for a newly plugged microphone — but never under an open
+        # recording, which a re-scan would cut.
+        devices = input_devices(refresh=self.session is None)
         current = self.settings.value("speech/device", "")
-        for name in [""] + [n for _, n in input_devices()]:
-            a = self._mic_menu.addAction(name or "System default")
+        names = [n for _, n in devices]
+        default = default_input_name()
+        items = [("", f"System default ({default})" if default else "System default")]
+        items += [(n, n) for n in names]
+        if current and current not in names:
+            items.append((current, f"{current} — not connected"))
+        group = QActionGroup(menu)
+        for name, label in items:
+            a = menu.addAction(label)
             a.setCheckable(True)
             a.setChecked(name == current)
-            a.triggered.connect(lambda _=False, n=name: self.settings.setValue("speech/device", n))
+            a.triggered.connect(lambda _=False, n=name: self.pick_microphone(n))
             group.addAction(a)
+        if not names:
+            menu.addAction("No microphone found").setEnabled(False)
+
+    def _add_speakers(self, menu) -> None:
+        current = self.settings.value("speech/output", "")
+        devs = output_devices()
+        default = next((d.description() for d in devs if d.isDefault()), "")
+        items = [("", f"System default ({default})" if default else "System default")]
+        items += [(device_id(d), d.description()) for d in devs]
+        if current and current not in [i for i, _ in items]:
+            items.append((current, "The chosen speakers — not connected"))
+        group = QActionGroup(menu)
+        for dev_id, label in items:
+            a = menu.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(dev_id == current)
+            a.triggered.connect(lambda _=False, d=dev_id: self.pick_speakers(d))
+            group.addAction(a)
+
+    def pick_microphone(self, name: str) -> None:
+        """Use the input called *name* ("" = the system default) — at once
+        if listening, without a break in the recording."""
+        self.settings.setValue("speech/device", name)
+        self._show_microphone()
+        if self.session is not None:
+            device = find_input(name)
+            self.session.switch_device(device, name if device is not None
+                                       else default_input_name() or "the system default")
+
+    def pick_speakers(self, dev_id: str) -> None:
+        self.settings.setValue("speech/output", dev_id)
+        self.player.set_device(dev_id)
+        self.statusBar().showMessage(f"Recordings play through {self.player.device_name()}", 5000)
+
+    def _show_microphone(self) -> None:
+        name = self.settings.value("speech/device", "") or "system default"
+        tip = (f"Write what is said onto the page — offline Whisper, the audio never leaves "
+               f"this computer (Ctrl+L). Microphone: {name} — the arrow changes it")
+        self.act_listen.setToolTip(tip)
+        self.act_listen.setStatusTip(tip)
 
     def _set_icons(self) -> None:
         for a, icon in ((self.act_new, icons.new_note()), (self.act_open, icons.open_note()),
@@ -961,7 +1037,10 @@ class MainWindow(QMainWindow):
         if self._engine is not None and self._engine[0] != model:
             self._engine = None
         device_name = self.settings.value("speech/device", "")
-        device = next((i for i, n in input_devices() if n == device_name), None)
+        device = find_input(device_name, input_devices(refresh=True))
+        if device_name and device is None:
+            self.statusBar().showMessage(
+                f"{device_name} is not connected — listening with the system default", 10000)
         t0 = self.note.elapsed() or 0.0
         # Recorded outside the note's temporary folder, so a crash cannot
         # lose it (see recovery.py).
@@ -1054,8 +1133,8 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Listen", (
             "The microphone is sending only silence — macOS is probably blocking "
             f"it.\n\nAllow {host} in System Settings ▸ Privacy & Security ▸ "
-            "Microphone, then quit and restart it. Or pick another input under "
-            "Speech ▸ Microphone."))
+            "Microphone, then quit and restart it. Or pick another microphone "
+            "with the arrow beside Listen."))
 
     def _stop_listening(self) -> None:
         self.act_listen.setChecked(False)

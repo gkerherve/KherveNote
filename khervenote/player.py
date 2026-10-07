@@ -8,7 +8,15 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QObject, QUrl, Signal
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaDevices, QMediaPlayer
+
+
+def device_id(dev: QAudioDevice) -> str:
+    return bytes(dev.id()).decode("utf-8", "replace")
+
+
+def output_devices() -> list[QAudioDevice]:
+    return list(QMediaDevices.audioOutputs())
 
 
 class LinePlayer(QObject):
@@ -20,6 +28,10 @@ class LinePlayer(QObject):
         self.output = QAudioOutput(self)
         self.player = QMediaPlayer(self)
         self.player.setAudioOutput(self.output)
+        #: The chosen speakers' id; "" follows the system default.
+        self.device = ""
+        self._devices = QMediaDevices(self)
+        self._devices.audioOutputsChanged.connect(self._apply_device)
         self.player.positionChanged.connect(self._position)
         self.player.mediaStatusChanged.connect(self._status)
         self.player.playbackStateChanged.connect(self._playback)
@@ -28,6 +40,23 @@ class LinePlayer(QObject):
         self._end_ms: Optional[int] = None
         self._pending = False
         self.label = ""
+
+    def set_device(self, dev_id: str) -> None:
+        """Play through the speakers / headphones *dev_id* ("" = the
+        system default, followed when it changes)."""
+        self.device = dev_id
+        self._apply_device()
+
+    def _apply_device(self) -> None:
+        # A chosen device that is unplugged falls back to the default,
+        # and comes back by itself when plugged in again.
+        chosen = next((d for d in output_devices() if device_id(d) == self.device), None)
+        dev = chosen or QMediaDevices.defaultAudioOutput()
+        if dev.id() != self.output.device().id():
+            self.output.setDevice(dev)
+
+    def device_name(self) -> str:
+        return self.output.device().description()
 
     def play(self, path: str, start_s: float, end_s: Optional[float] = None,
              label: str = "") -> None:
